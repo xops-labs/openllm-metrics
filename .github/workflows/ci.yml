@@ -1,0 +1,274 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# CI: lint + typecheck + test + dashboards + build + secret scan for every package on every PR.
+#
+# Triggers on:
+#   - Pushes to any branch (catches feature-branch breakage before PR review).
+#   - Pull requests targeting main (the merge gate).
+#
+# The jobs run in parallel. None depend on the others; a single
+# failing job blocks the PR without holding up the others' feedback.
+
+name: ci
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - main
+
+# Cancel superseded runs on the same ref so a fast-follow push doesn't queue.
+# `head_ref` is set for PRs (the source branch); `ref` is used for pushes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.25.x'
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9.15.0'
+  # .golangci.yml uses the v2 config schema, so the binary must be v2.x.
+  # Keep in sync with the pin in tools/scripts/bootstrap.sh.
+  GOLANGCI_LINT_VERSION: 'v2.5.0'
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # setup-go's built-in module cache. Keyed on the shared library
+          # packages' go.sum files, which anchor the dependency set the
+          # service modules reuse.
+          cache-dependency-path: |
+            packages/bus-client/go/go.sum
+            packages/extensions/go/go.sum
+            packages/telemetry/go/go.sum
+
+      - name: Install golangci-lint
+        # Install the binary directly so lint.sh (the source of truth) can invoke it.
+        # Using the upstream installer script pinned to the version env var.
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_VERSION}/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" "${GOLANGCI_LINT_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/golangci-lint" --version
+
+      - name: Install markdownlint-cli2
+        run: pnpm add -g markdownlint-cli2@0.14.0
+
+      - name: Run lint.sh
+        run: ./tools/scripts/lint.sh
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Runs `tsc --noEmit` in every workspace package that defines a
+      # typecheck script (admin console + Node SDK today).
+      - name: TypeScript typecheck
+        run: pnpm -r --if-present typecheck
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            packages/bus-client/go/go.sum
+            packages/extensions/go/go.sum
+            packages/telemetry/go/go.sum
+
+      - name: Run test.sh
+        run: ./tools/scripts/test.sh
+
+  dashboards:
+    name: dashboards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Validate dashboard JSON parses
+        run: |
+          set -euo pipefail
+          for f in packages/dashboards/grafana/*.json; do
+            echo "==> python -m json.tool $f"
+            python3 -m json.tool < "$f" > /dev/null
+          done
+
+      - name: Install grafana/dashboard-linter
+        # The linter is distributed as a Go binary. Install it into the
+        # workspace GOBIN. The upstream module pins a `replace` directive
+        # so installation must happen from a freshly-checked-out source
+        # tree (cannot `go install` directly). Pinned to a release tag —
+        # upstream main moves its Go floor ahead of ours. GOTOOLCHAIN=auto
+        # (setup-go v6 pins `local`) lets Go fetch the toolchain the linter
+        # requires without changing the repo's own 1.25.x floor.
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          git clone --depth 1 --branch v0.1.1 https://github.com/grafana/dashboard-linter "$tmp"
+          (cd "$tmp" && go build -o "$(go env GOPATH)/bin/dashboard-linter" .)
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Grafana dashboard-linter
+        run: |
+          set -euo pipefail
+          for f in packages/dashboards/grafana/*.json; do
+            echo "==> dashboard-linter lint $f"
+            dashboard-linter lint "$f"
+          done
+
+      - name: promtool check rules (alert syntax)
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/packages/dashboards/prometheus-alerts:/rules" \
+            prom/prometheus:v2.52.0 \
+            check rules \
+              /rules/llm-cost-spike.yml \
+              /rules/llm-error-rate.yml \
+              /rules/llm-exporter-stale.yml
+
+      - name: promtool test rules (alert unit tests)
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint promtool \
+            -v "$PWD:/work" \
+            prom/prometheus:v2.52.0 \
+            test rules \
+              /work/tests/dashboards/cost-spike-fixture.yml \
+              /work/tests/dashboards/error-rate-fixture.yml \
+              /work/tests/dashboards/exporter-stale-fixture.yml
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            packages/bus-client/go/go.sum
+            packages/extensions/go/go.sum
+            packages/telemetry/go/go.sum
+
+      # Build every module declared in go.work. `go list -m` is workspace-aware,
+      # so adding a new `use ./apps/api/gateway` to go.work picks it up here
+      # automatically — no edits to this workflow required.
+      - name: Build all Go modules
+        run: |
+          set -euo pipefail
+          modules=$(go list -m -f '{{.Dir}}')
+          if [ -z "$modules" ]; then
+            echo "ERROR: no Go modules found in go.work"
+            exit 1
+          fi
+          echo "Modules to build:"
+          echo "$modules"
+          echo ""
+          failures=0
+          while IFS= read -r dir; do
+            echo "==> go build ./... in $dir"
+            (cd "$dir" && go build ./...) || failures=$((failures + 1))
+          done <<< "$modules"
+          if [ "$failures" -gt 0 ]; then
+            echo ""
+            echo "ERROR: $failures module(s) failed to build."
+            exit 1
+          fi
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Full history so gitleaks can scan every commit, not just HEAD.
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.dev/contracts/telemetry/llm.quota.risk.v1/v1",
+  "title": "LLMQuotaRisk",
+  "description": "Per-(tenant, provider, model, region, kind) rolling snapshot of provider rate-limit signals — used_ratio, seconds_to_reset, and a transparent linear risk_score. Signal-only: the event carries no recommendation, no routing hint, and no enforcement decision. Routing / throttling / fallback logic on these signals is outside this event contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "source",
+    "source_service",
+    "tenant",
+    "provider",
+    "model",
+    "kind",
+    "remaining",
+    "limit",
+    "used_ratio",
+    "has_denominator",
+    "seconds_to_reset",
+    "risk_score",
+    "observed_at",
+    "snapshot_emitted_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "UUID assigned per snapshot emission."
+    },
+    "source": {
+      "type": "string",
+      "description": "Discriminator for the surface that produced this snapshot. quota-risk emits 'worker'."
+    },
+    "source_service": {
+      "type": "string",
+      "const": "apps/worker/quota-risk"
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string"
+    },
+    "region": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "description": "Quota dimension this snapshot describes (e.g. 'tokens', 'requests'). Free-form — the parser per provider chooses the canonical label."
+    },
+    "remaining": {
+      "type": "integer",
+      "description": "Remaining quota units reported by the provider. May be zero or negative when the provider has not supplied a header."
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Quota limit reported by the provider. Zero when only the remaining count is known."
+    },
+    "used_ratio": {
+      "type": "number",
+      "description": "Ratio of used quota to limit. Zero when has_denominator is false."
+    },
+    "has_denominator": {
+      "type": "boolean",
+      "description": "True when the limit is known and used_ratio is meaningful."
+    },
+    "seconds_to_reset": {
+      "type": "number",
+      "description": "Seconds until the provider's quota window resets, when reported."
+    },
+    "risk_score": {
+      "type": "number",
+      "description": "Transparent linear score derived from used_ratio and seconds_to_reset. The function is documented in the worker README; it is intentionally NOT a scoring engine — the OSS layer publishes the input signal only."
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp of the most recent header observation that fed this snapshot."
+    },
+    "snapshot_emitted_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp at which the refresh loop emitted this snapshot."
+    }
+  }
+}

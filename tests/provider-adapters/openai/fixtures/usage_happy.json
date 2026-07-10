@@ -1,0 +1,47 @@
+{
+  "object": "page",
+  "data": [
+    {
+      "object": "bucket",
+      "start_time": 1747476000,
+      "end_time": 1747476300,
+      "results": [
+        {
+          "object": "organization.usage.completions.result",
+          "input_tokens": 1500,
+          "output_tokens": 420,
+          "input_cached_tokens": 0,
+          "num_model_requests": 3,
+          "project_id": "proj_abc",
+          "model": "gpt-4o-mini"
+        },
+        {
+          "object": "organization.usage.completions.result",
+          "input_tokens": 8000,
+          "output_tokens": 2200,
+          "input_cached_tokens": 100,
+          "num_model_requests": 11,
+          "project_id": "proj_abc",
+          "model": "gpt-4o"
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1747476300,
+      "end_time": 1747476600,
+      "results": [
+        {
+          "object": "organization.usage.completions.result",
+          "input_tokens": 600,
+          "output_tokens": 90,
+          "input_cached_tokens": 0,
+          "num_model_requests": 1,
+          "project_id": "proj_xyz",
+          "model": "text-embedding-3-small"
+        }
+      ]
+    }
+  ],
+  "has_more": false
+}

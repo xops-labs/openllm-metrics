@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/slo/schemas/slo-definition.v1.json",
+  "title": "OpenLLM Metrics SLO Definition",
+  "description": "Canonical schema for an LLM-native Service Level Objective. One document = one objective. Multi-tenant by construction: every SLO is scoped to a tenant/team/app triple and may optionally narrow to a single provider or model. The same document feeds Grafana panels (via the dashboard pack) and Prometheus burn-rate alerts (via the recording + alert rule files at platform/slo/prometheus/). Schema version: v1. Breaking changes go to v2; backward-compatible additions extend v1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "tenant",
+    "team",
+    "app",
+    "objective_type",
+    "target",
+    "window",
+    "version",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable identifier for the SLO. Used as the series identifier in recording rules and as the panel filter in dashboards.",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$",
+      "minLength": 3,
+      "maxLength": 64
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name shown in dashboards and alert notifications.",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional long-form description. Rendered in the SLO catalog view.",
+      "maxLength": 1024
+    },
+    "tenant": {
+      "type": "string",
+      "description": "Tenant the SLO belongs to. Required because every metric, decision, and audit row in OpenLLM Metrics is tenant-scoped.",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "team": {
+      "type": "string",
+      "description": "Owning team. Used for alert routing and SLO ownership in the console.",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "app": {
+      "type": "string",
+      "description": "Application the SLO covers. May be a wildcard '*' when the SLO is team-wide across apps.",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "objective_type": {
+      "type": "string",
+      "description": "Which canonical objective this SLO measures. Each type maps to a fixed SLI expression in platform/slo/prometheus/recording-rules.yaml.",
+      "enum": ["latency_p99", "availability", "cost_per_call"]
+    },
+    "target": {
+      "type": "number",
+      "description": "Target SLO compliance level expressed as a fraction in (0, 1). For latency_p99 and cost_per_call this is the fraction of observations that must meet the per-objective bound; for availability it is the success ratio. Example: 0.999 = three nines.",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "window": {
+      "type": "string",
+      "description": "Rolling compliance window expressed as a Prometheus duration. Recording rules pre-compute burn over 1h, 6h, 24h, and 3d sub-windows regardless of this value; the window field declares the SLO accounting period (typical: 7d, 30d).",
+      "pattern": "^[0-9]+(s|m|h|d|w)$"
+    },
+    "provider": {
+      "type": "string",
+      "description": "Optional provider filter (e.g. 'openai', 'anthropic'). Omit to apply across all providers reachable from this tenant/team/app.",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "model": {
+      "type": "string",
+      "description": "Optional model filter (e.g. 'gpt-4o-mini'). Omit to apply across all models served under the chosen provider scope.",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "latency_bound_seconds": {
+      "type": "number",
+      "description": "Required when objective_type is 'latency_p99'. The per-request latency budget; observations above this count as SLO breaches.",
+      "exclusiveMinimum": 0
+    },
+    "cost_bound_usd": {
+      "type": "number",
+      "description": "Required when objective_type is 'cost_per_call'. The per-call USD cost budget; calls above this count as SLO breaches.",
+      "exclusiveMinimum": 0
+    },
+    "version": {
+      "type": "integer",
+      "description": "Monotonic version number for this SLO document. Incremented on every edit. Used by the audit ledger to anchor change history.",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "description": "RFC 3339 timestamp the SLO was first authored.",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "description": "RFC 3339 timestamp of the most recent edit. Optional on initial author; populated by the console on save.",
+      "format": "date-time"
+    },
+    "owner": {
+      "type": "string",
+      "description": "Optional contact (email or Slack handle) for the SLO owner. Surfaced in burn-rate alert annotations.",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "notification_channels": {
+      "type": "array",
+      "description": "Optional list of notification channel identifiers consumed by F033. The channel IDs themselves are defined in the F033 notification config; the SLO document only references them by name.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "uniqueItems": true,
+      "maxItems": 16
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "objective_type": { "const": "latency_p99" } }
+      },
+      "then": {
+        "required": ["latency_bound_seconds"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "objective_type": { "const": "cost_per_call" } }
+      },
+      "then": {
+        "required": ["cost_bound_usd"]
+      }
+    }
+  ]
+}

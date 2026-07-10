@@ -1,0 +1,42 @@
+name: New provider adapter
+description: Request or volunteer to add support for an LLM provider (usage parsing, rate-limit headers, billing poller, pricing).
+title: 'feat(provider): '
+labels: ['provider-adapter', 'enhancement', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Provider adapters are one of the best first contributions — the interface is stable and the rest of the platform stays provider-agnostic. See [docs/architecture/adding-a-provider.md](https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/architecture/adding-a-provider.md).
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      placeholder: e.g. Mistral La Plateforme, Cohere, Together AI
+    validations:
+      required: true
+  - type: checkboxes
+    id: surfaces
+    attributes:
+      label: Which capture surfaces does the provider support?
+      options:
+        - label: Chat/completions API with a usage block in responses (gateway runtime parsing)
+        - label: Rate-limit / quota headers on responses (quota-risk parsing)
+        - label: Usage or billing admin API (pull-mode poller)
+        - label: Published list pricing (pricing catalog entry)
+  - type: textarea
+    id: docs
+    attributes:
+      label: API documentation links
+      description: Links to the provider's API reference for usage reporting, rate limits, and billing.
+    validations:
+      required: true
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Are you volunteering to implement it?
+      options:
+        - 'Yes — I will open a PR'
+        - 'Partially — I can help test against a real account'
+        - 'No — requesting only'
+    validations:
+      required: true

@@ -1,0 +1,30 @@
+{{/*
+Copyright 2026 Yasvanth Udayakumar
+Licensed under the Apache License, Version 2.0.
+
+Prometheus Operator ServiceMonitor for the F010 aggregator. Gated on
+`prometheus.serviceMonitor.enabled` so the chart still installs on clusters
+without the monitoring.coreos.com CRDs.
+*/}}
+{{- if and .Values.metricsEndpoint.enabled .Values.prometheus.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "openllm-metrics.fullname" . }}-metrics-endpoint
+  labels:
+    {{- include "openllm-metrics.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics-endpoint
+    {{- with .Values.prometheus.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "openllm-metrics.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: metrics-endpoint
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.prometheus.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.prometheus.serviceMonitor.scrapeTimeout }}
+{{- end }}

@@ -1,0 +1,806 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# OpenLLM Metrics — full-stack local development compose.
+#
+# Brings up the complete platform with a single command:
+#
+#   docker compose up -d
+#
+# Stack layers
+#   Infra        : Redpanda (Kafka bus), Redpanda Console, topic-init,
+#                  PostgreSQL (+ one-shot db-migrate / db-seed),
+#                  OTel Collector, Prometheus, Grafana
+#   Exporter     : llm-usage-exporter (optional, --profile exporter;
+#                  bring your own image via LLM_USAGE_EXPORTER_IMAGE)
+#   Data path    : openai-poller, metrics-endpoint, label-translator,
+#                  focus-ingester, cost-mapper, reconciler
+#   Gateway      : gateway (LLM proxy + runtime event producer)
+#   Workers      : quota-risk, notifier
+#   APIs         : policy-service, audit-service, decision-service, analytics-service
+#   Console      : admin-console (Next.js)
+#
+# First startup
+#   1. (Optional) Copy .env.example to .env. Every variable has a working
+#      default, so the stack boots with no .env at all. Set a real
+#      OPENAI_ADMIN_API_KEY only when you want live OpenAI billing data;
+#      the demo profile needs zero API keys:
+#        docker compose --profile demo up -d
+#   2. docker compose up -d
+#   The first run builds ~16 images from source — expect 10-20 minutes;
+#   later runs reuse the build cache.
+#   The Admin Console (:3030) uses a passwordless dev login: enter any email
+#   (the seeded actor is admin@acme.dev) — see docs/quickstart.md.
+#   DB migrations and demo seed run automatically (one-shot db-migrate and
+#   db-seed services); both are idempotent across restarts. To re-run by
+#   hand: make dev-migrate / ./tools/scripts/seed.sh.
+#
+# Tear down (keep volumes):
+#   docker compose down
+# Wipe state:
+#   docker compose down -v
+#
+# Service URLs (all localhost):
+#   Admin Console      : http://localhost:3030
+#   Grafana            : http://localhost:3000   (admin / devpassword)
+#   Prometheus         : http://localhost:9090
+#   OTel health        : http://localhost:13133/-/healthy
+#   OTLP ingest        : localhost:4317 (gRPC) / localhost:4318 (HTTP)
+#   Redpanda Console   : http://localhost:8095
+#   llm-usage-exporter : http://localhost:9095/metrics   (--profile exporter)
+#   metrics-endpoint   : http://localhost:9092/metrics
+#   openai-poller      : http://localhost:8088/metrics
+#   label-translator   : http://localhost:8081/metrics   (--profile exporter)
+#   focus-ingester     : http://localhost:8082/metrics   (--profile exporter)
+#   cost-mapper        : http://localhost:8083/metrics
+#   reconciler         : http://localhost:8084/metrics
+#   gateway (proxy)    : http://localhost:8085
+#   gateway (metrics)  : http://localhost:8086/metrics
+#   quota-risk         : http://localhost:8087/metrics
+#   demo-generator     : http://localhost:8089/healthz   (--profile demo)
+#   policy-service     : http://localhost:8090
+#   audit-service      : http://localhost:8091
+#   notifier           : http://localhost:8092
+#   decision-service   : http://localhost:8093
+#   analytics-service  : http://localhost:8096
+#   PostgreSQL         : localhost:5433          (openllm / devpassword / openllm_metrics)
+#   Redpanda Kafka     : localhost:19092
+#   Redpanda Schema    : http://localhost:18081
+#
+# Note: port 9090 is reserved for Prometheus. The metrics-endpoint is
+# exposed on 9092 in this compose; the quickstart compose (quickstart.yml)
+# swaps these. The two stacks share several host ports (Grafana 3000,
+# Redpanda 19092/18081/18082, most worker ports), so run one stack at a
+# time — tear down with `docker compose down` before switching.
+
+name: openllm-metrics
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: openllm_metrics
+      POSTGRES_USER: openllm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./platform/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U openllm -d openllm_metrics']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - openllm_local
+
+  # One-shot goose runner — applies every per-schema migration tree so a plain
+  # `docker compose up` lands with all tables present. Idempotent: goose tracks
+  # state in <schema>.goose_db_version, so re-running on every `up` is a no-op.
+  db-migrate:
+    build:
+      context: .
+      dockerfile: platform/db/Dockerfile.migrate
+    image: openllm/db-migrate:dev
+    environment:
+      # Never log this value.
+      OPENLLM_MIGRATE_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    volumes:
+      - ./platform/db:/db:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        for schema in control_plane audit gateway scoring; do
+          echo "==> goose up: $$schema"
+          goose -dir "/db/$$schema/migrations" -table "$${schema}.goose_db_version" postgres "$$OPENLLM_MIGRATE_DSN" up
+        done
+        echo "All migrations applied."
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+    networks:
+      - openllm_local
+
+  # One-shot demo seed — loads platform/db/seeds/*.sql (identity + governance
+  # demo data) after migrations. The seed files are idempotent (ON CONFLICT),
+  # so re-running on every `up` is safe.
+  db-seed:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+    volumes:
+      - ./platform/db/seeds:/seeds:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        for f in /seeds/0*.sql; do
+          echo "==> applying seed $$f"
+          psql -h postgres -p 5432 -U openllm -d openllm_metrics -v ON_ERROR_STOP=1 -q -f "$$f"
+        done
+        echo "All seeds applied."
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+    restart: on-failure
+    networks:
+      - openllm_local
+
+  # ── Redpanda (Kafka-compatible streaming bus) ─────────────────────────────────
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.9
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 512M
+      - --mode dev-container
+      - --default-log-level=warn
+    ports:
+      - '19092:19092' # Kafka API (host)
+      - '18081:18081' # Schema Registry (host)
+      - '18082:18082' # Pandaproxy REST (host)
+      - '9644:9644' # Admin API
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ['CMD', 'rpk', 'cluster', 'info', '--brokers', 'localhost:9092']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - openllm_local
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.6.0
+    entrypoint: /bin/sh
+    command: -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml; /app/console --config.filepath=/tmp/config.yml'
+    environment:
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+          schemaRegistry:
+            enabled: true
+            urls: ["http://redpanda:8081"]
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda:9644"]
+    ports:
+      # Host 8095 (not 8080) — 8080 is heavily contended by other local stacks.
+      - '8095:8080'
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    # Retry on the transient Docker DNS race that can hit this UI at first boot
+    # ("lookup redpanda ... network is unreachable") right after the engine starts.
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  # Idempotent topic bootstrap — creates all data-path topics in one pass.
+  # Topics registered in platform/bus/topics.yaml (Phase 1) plus Phase B/C
+  # data-path topics and the alert / routing topics consumed by Phase D/E
+  # services. Names must stay in lockstep with the consuming services' config
+  # defaults; update topics.yaml when the corresponding schemas land.
+  topic-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.9
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        for topic in \
+          llm.usage.raw.openai \
+          llm.usage.raw.anthropic \
+          llm.usage.raw.google \
+          llm.usage.raw.azure_openai \
+          llm.usage.raw.bedrock \
+          llm.usage.normalized \
+          llm.runtime.normalized \
+          llm.usage.reconciled \
+          llm.cost.estimated \
+          llm.reconciliation.window \
+          llm.scores.computed \
+          llm.policy.decisions \
+          llm.routing.recommendations \
+          llm.quota.risk.v1 \
+          routing.decision.v1 \
+          audit.event.v1 \
+          alert.event.v1; do
+          rpk topic create "$$topic" --brokers redpanda:9092 --partitions 4 2>/dev/null || true
+          rpk topic create "$${topic}.dlq" --brokers redpanda:9092 --partitions 1 2>/dev/null || true
+        done
+        echo "All topics created."
+    restart: on-failure
+    networks:
+      - openllm_local
+
+  # ── OpenTelemetry Collector ───────────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    container_name: openllm_otel_collector
+    command: ['--config=/etc/otelcol/config.yaml']
+    volumes:
+      - ./platform/observability/otel-collector/dev.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - '4317:4317' # OTLP gRPC
+      - '4318:4318' # OTLP HTTP
+      - '8889:8889' # Prometheus scrape exporter
+      - '13133:13133' # health check
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  # ── Prometheus ────────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=14d
+      - --storage.tsdb.wal-compression
+      - --web.enable-lifecycle
+      - --web.enable-remote-write-receiver
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./platform/tsdb/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./platform/tsdb/alerts:/etc/prometheus/alerts:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:9090/-/healthy']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - openllm_local
+
+  # ── Grafana ───────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.0.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: devpassword
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_FEATURE_TOGGLES_ENABLE: publicDashboards
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./platform/tsdb/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:3000/api/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - openllm_local
+
+  # ── llm-usage-exporter (optional, --profile exporter) ───────────────────────
+  # Optional pull-mode add-on (not part of the default product).
+  # The default stack uses RUNTIME mode — the in-repo Go gateway + SDKs capture
+  # provider usage/cost/latency with no external exporter. Pull-mode adds
+  # billing-API reconciliation by polling a separate `llm-usage-exporter`.
+  # BRING YOUR OWN IMAGE: set LLM_USAGE_EXPORTER_IMAGE to your exporter image —
+  # the pinned upstream default below may not be publicly pullable. The pin
+  # tracks platform/adoption/llm-usage-exporter.version (source of truth) and
+  # is hardcoded here because Compose cannot read arbitrary files.
+  # Exposes /metrics (Prometheus) and /focus.json (FOCUS billing snapshot).
+  # Provider credentials are passed through from the host environment only —
+  # they are never logged or echoed inside the container.
+  # Enable the whole pull-mode chain with:
+  #   docker compose --profile exporter up -d
+  llm-usage-exporter:
+    image: ${LLM_USAGE_EXPORTER_IMAGE:-ghcr.io/xops-labs/llm-usage-exporter:v0.5.0}
+    profiles: ['exporter']
+    environment:
+      OPENAI_ADMIN_KEY: ${OPENAI_ADMIN_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    ports:
+      - '9095:9090'
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  # ── OpenLLM Metrics data-path services ───────────────────────────────────────
+
+  openai-poller:
+    build:
+      context: .
+      dockerfile: apps/worker/usage-poller/openai/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/openai-poller:dev
+    environment:
+      # Defaults to the .env.example placeholder so the keyless demo
+      # (`docker compose --profile demo up`) starts without a .env — synthetic
+      # demo traffic comes from demo-generator, not this poller. The poller only
+      # produces real data with a valid key: set OPENAI_ADMIN_API_KEY (in .env or
+      # the environment) before using pull-mode OpenAI billing. An empty value
+      # still fail-fasts at startup.
+      OPENAI_ADMIN_API_KEY: ${OPENAI_ADMIN_API_KEY:-sk-admin-REPLACE_ME}
+    ports:
+      - '8088:8080'
+    volumes:
+      - ./platform/deployment/compose/configs/openai-poller.yaml:/etc/openllm-poller/openai.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  metrics-endpoint:
+    build:
+      context: .
+      dockerfile: apps/api/metrics-endpoint/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/metrics-endpoint:dev
+    ports:
+      # Prometheus occupies 9090 in this compose; expose metrics-endpoint on 9092.
+      - '9092:9090'
+    volumes:
+      - ./platform/deployment/compose/configs/metrics-endpoint.yaml:/etc/openllm-metrics/metrics-endpoint.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  label-translator:
+    build:
+      context: .
+      dockerfile: apps/worker/label-translator/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/label-translator:dev
+    profiles: ['exporter'] # optional pull-mode add-on; not in the default stack
+    environment:
+      # Postgres DSN for the control_plane schema. Never log this value.
+      OPENLLM_CONTROL_PLANE_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      - '8081:8081'
+    volumes:
+      - ./platform/deployment/compose/configs/label-translator.yaml:/etc/openllm-label-translator/config.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+      llm-usage-exporter:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  focus-ingester:
+    build:
+      context: .
+      dockerfile: apps/worker/focus-ingester/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/focus-ingester:dev
+    profiles: ['exporter'] # optional pull-mode add-on; not in the default stack
+    environment:
+      OPENLLM_CONTROL_PLANE_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      - '8082:8082'
+    volumes:
+      - ./platform/deployment/compose/configs/focus-ingester.yaml:/etc/openllm-focus-ingester/config.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+      llm-usage-exporter:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  cost-mapper:
+    build:
+      context: .
+      dockerfile: apps/worker/cost-mapper/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/cost-mapper:dev
+    environment:
+      OPENLLM_CONTROL_PLANE_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      - '8083:8083'
+    volumes:
+      - ./platform/deployment/compose/configs/cost-mapper.yaml:/etc/openllm-cost-mapper/config.yaml:ro
+      - ./platform/pricing:/etc/openllm-cost-mapper/pricing:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  reconciler:
+    build:
+      context: .
+      dockerfile: apps/worker/reconciler/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/reconciler:dev
+    environment:
+      OPENLLM_CONTROL_PLANE_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      - '8084:8084'
+    volumes:
+      - ./platform/deployment/compose/configs/reconciler.yaml:/etc/openllm-reconciler/config.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  # ── Demo traffic generator (optional, --profile demo) ───────────────────────
+  # Emits synthetic, schema-conformant telemetry (runtime events + pull-mode
+  # billing rollups + reconciled billing windows) under the seeded Acme tenant
+  # so every analytics screen and Grafana dashboard lights up with ZERO
+  # provider API keys:
+  #   docker compose --profile demo up -d
+  # Traffic is clearly marked source_service=examples/demo-generator.
+  demo-generator:
+    build:
+      context: .
+      dockerfile: examples/demo-generator/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/demo-generator:dev
+    profiles: ['demo']
+    environment:
+      OLM_DEMO_BROKERS: redpanda:9092
+      OLM_DEMO_RPS: ${OLM_DEMO_RPS:-4}
+      # Tenant the synthetic traffic is attributed to. Defaults to the seeded
+      # Acme Corp tenant (platform/db/seeds/001_demo_data.sql) — the same one
+      # the console's dev login lands on (OLM_DEFAULT_TENANT below).
+      OLM_DEMO_TENANT: ${OLM_DEMO_TENANT:-00000000-0000-0000-0002-000000000001}
+    ports:
+      - '8089:8089' # /healthz with emit counters
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  # ── Gateway ───────────────────────────────────────────────────────────────────
+  # LLM reverse proxy that normalises usage, cost, and latency signals across
+  # providers and publishes runtime events to the bus (llm.runtime.normalized).
+  # Provider API keys are forwarded from the caller's Authorization header —
+  # the gateway does not hold credentials.
+  gateway:
+    build:
+      context: .
+      dockerfile: apps/gateway/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/gateway:dev
+    environment:
+      # Optional upstream URL overrides (see gateway config README).
+      OLM_UPSTREAM_OPENAI_URL: ${OLM_UPSTREAM_OPENAI_URL:-}
+      OLM_UPSTREAM_ANTHROPIC_URL: ${OLM_UPSTREAM_ANTHROPIC_URL:-}
+      OLM_UPSTREAM_GEMINI_URL: ${OLM_UPSTREAM_GEMINI_URL:-}
+      OLM_UPSTREAM_BEDROCK_URL: ${OLM_UPSTREAM_BEDROCK_URL:-}
+      OLM_UPSTREAM_AZURE_OPENAI_URL: ${OLM_UPSTREAM_AZURE_OPENAI_URL:-}
+    ports:
+      - '8085:8080' # LLM proxy endpoint
+      - '8086:8081' # Prometheus metrics + healthz
+    volumes:
+      - ./platform/deployment/compose/configs/gateway.yaml:/etc/openllm-gateway/config.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  # ── Workers ───────────────────────────────────────────────────────────────────
+
+  quota-risk:
+    build:
+      context: .
+      dockerfile: apps/worker/quota-risk/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/quota-risk:dev
+    ports:
+      - '8087:8084'
+    volumes:
+      - ./platform/deployment/compose/configs/quota-risk.yaml:/etc/openllm-quota-risk/config.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  notifier:
+    build:
+      context: .
+      dockerfile: apps/worker/notifier/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/notifier:dev
+    environment:
+      # DSN for control_plane.notification_deliveries. Never log this value.
+      OPENLLM_CONTROL_PLANE_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      # Host 8092 matches admin-console OLM_NOTIFICATION_SERVICE_URL default.
+      - '8092:8085'
+    volumes:
+      - ./platform/deployment/compose/configs/notifier.yaml:/etc/openllm-notifier/config.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  # ── Control-plane APIs ────────────────────────────────────────────────────────
+
+  policy-service:
+    build:
+      context: .
+      dockerfile: apps/api/policy-service/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/policy-service:dev
+    environment:
+      # DSN supplied inline; service reads db.dsn from config file.
+      # Override by mounting a custom config or setting OPENLLM_POLICY_DSN.
+      OPENLLM_POLICY_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      # Host 8090 matches admin-console OLM_POLICY_SERVICE_URL default.
+      - '8090:8090'
+    volumes:
+      - ./platform/deployment/compose/configs/policy-service.yaml:/etc/openllm-policy-service/config.yaml:ro
+      - ./packages/contracts/policy/v1:/etc/openllm-policy-service/schema:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      db-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  audit-service:
+    build:
+      context: .
+      dockerfile: apps/api/audit-service/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/audit-service:dev
+    environment:
+      # DSN for the audit ledger schema. Never log this value.
+      OPENLLM_AUDIT_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      # Host 8091 matches admin-console OLM_AUDIT_SERVICE_URL default.
+      - '8091:8090'
+    volumes:
+      - ./platform/deployment/compose/configs/audit-service.yaml:/etc/openllm-audit-service/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      db-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  decision-service:
+    build:
+      context: .
+      dockerfile: apps/api/decision-service/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/decision-service:dev
+    environment:
+      # DSN for the routing.routing_decisions table. Never log this value.
+      OPENLLM_DECISION_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      # Host 8093 matches admin-console OLM_DECISION_SERVICE_URL default.
+      - '8093:8094'
+    volumes:
+      - ./platform/deployment/compose/configs/decision-service.yaml:/etc/openllm-decision-service/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      db-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  analytics-service:
+    build:
+      context: .
+      dockerfile: apps/api/analytics-service/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/analytics-service:dev
+    environment:
+      # DSN for control_plane.analytics_saved_views. Never log this value.
+      # Override by mounting a custom config or setting OPENLLM_ANALYTICS_DSN.
+      OPENLLM_ANALYTICS_DSN: postgres://openllm:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      # Internal port 8095 matches OLM_ANALYTICS_SERVICE_URL (in-network DNS).
+      # Published on host 8096 to avoid colliding with redpanda-console (8095).
+      - '8096:8095'
+    volumes:
+      - ./platform/deployment/compose/configs/analytics-service.yaml:/etc/openllm-analytics-service/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+  # ── Admin Console ─────────────────────────────────────────────────────────────
+  # Next.js governance and observability console. Talks only to the control-plane
+  # APIs above — no provider URLs or API keys pass through the console.
+  admin-console:
+    build:
+      context: .
+      dockerfile: apps/web/admin-console/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/admin-console:dev
+    # The standalone server honours PORT; pin it to match the published port so
+    # host:3030 reaches the app (the image's Dockerfile default is 3000).
+    environment:
+      PORT: '3030'
+      # Auth.js (next-auth) requires a JWT signing secret in the production
+      # standalone build, even for the zero-config dev-login fallback. This is a
+      # LOCAL-DEV default only — set a real AUTH_SECRET in any real deployment.
+      AUTH_SECRET: ${AUTH_SECRET:-olm-local-dev-insecure-secret-change-me}
+      OLM_POLICY_SERVICE_URL: http://policy-service:8090
+      OLM_AUDIT_SERVICE_URL: http://audit-service:8090
+      OLM_NOTIFICATION_SERVICE_URL: http://notifier:8085
+      OLM_DECISION_SERVICE_URL: http://decision-service:8094
+      OLM_ANALYTICS_SERVICE_URL: http://analytics-service:8095
+      # Native /analytics queries the Prometheus HTTP API server-side; inside
+      # the compose network that is the prometheus service, not localhost.
+      OLM_METRICS_QUERY_URL: http://prometheus:9090
+      # Unlike the server-side URLs above, this one is rendered into iframe/link
+      # hrefs that the HOST BROWSER resolves, so it must be host-reachable — a
+      # compose-internal hostname would give dead /slo embeds. Grafana ships
+      # with anonymous Viewer access enabled, so the embeds render without a
+      # login.
+      OLM_GRAFANA_URL: http://localhost:3000
+      # Seed login: the dev-login session lands on the Acme demo tenant, which
+      # carries the seeded policies / notifications / audit data.
+      OLM_DEV_USER: ${OLM_DEV_USER:-admin@acme.dev}
+      OLM_DEFAULT_TENANT: ${OLM_DEFAULT_TENANT:-00000000-0000-0000-0002-000000000001}
+    ports:
+      - '3030:3030'
+    depends_on:
+      - policy-service
+      - audit-service
+      - decision-service
+      - analytics-service
+      - notifier
+      - grafana
+    restart: unless-stopped
+    networks:
+      - openllm_local
+
+networks:
+  openllm_local:
+    driver: bridge
+    name: openllm_local
+
+volumes:
+  postgres-data:
+  redpanda-data:
+  prometheus-data:
+  grafana-data:

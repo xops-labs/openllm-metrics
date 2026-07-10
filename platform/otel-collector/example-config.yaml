@@ -1,0 +1,99 @@
+# OpenLLM Metrics — example OTel Collector config wired with the llmprovider receiver.
+#
+# Copy this file into your deployment and adjust:
+#   - receivers.llmprovider.bus.brokers to your Redpanda/Kafka seed list
+#   - exporters.prometheus.endpoint / exporters.otlphttp.endpoint as needed
+#
+# The receiver consumes the canonical F008 runtime topic and emits OTLP
+# metrics that follow the GenAI semantic conventions plus the project-specific
+# llm_estimated_cost_usd extension. Any downstream OTel exporter Just Works.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  llmprovider:
+    bus:
+      brokers: [redpanda:9092]
+      topic: llm.runtime.normalized
+      group_id: otelcol-llmprovider
+      client_id: otelcol-llmprovider
+    consumer:
+      session_timeout: 30s
+      poll_timeout: 5s
+      max_records_per_poll: 1024
+
+processors:
+  # Defense in depth: even though the receiver never logs payloads, strip any
+  # redaction-listed keys on the way out so a misconfigured downstream exporter
+  # never sees them. Mirrors platform/observability/otel-collector/dev.yaml.
+  attributes/redact:
+    actions:
+      - key: authorization
+        action: delete
+      - key: api_key
+        action: delete
+      - key: x-api-key
+        action: delete
+      - key: secret
+        action: delete
+      - key: password
+        action: delete
+      - key: token
+        action: delete
+      - key: prompt
+        action: delete
+      - key: completion
+        action: delete
+      - key: messages
+        action: delete
+      - key: input
+        action: delete
+      - key: output
+        action: delete
+      - key: content
+        action: delete
+
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+  resource:
+    attributes:
+      - key: service.name
+        value: openllm-metrics-otelcol
+        action: upsert
+      - key: deployment.environment
+        from_attribute: env
+        action: insert
+
+exporters:
+  # Prometheus scrape exporter — pair with prometheus.yml job that targets :8889.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: openllm
+    # Resource attributes flow through as Prometheus labels.
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # OTLP/HTTP — any compliant backend (Tempo, Grafana Cloud, Honeycomb, etc.).
+  otlphttp:
+    endpoint: ${env:OTLP_HTTP_ENDPOINT}
+    headers:
+      authorization: ${env:OTLP_HTTP_AUTH}
+    compression: gzip
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 5m
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [llmprovider]
+      processors: [attributes/redact, resource, batch]
+      exporters: [prometheus, otlphttp]
+  telemetry:
+    logs:
+      level: info

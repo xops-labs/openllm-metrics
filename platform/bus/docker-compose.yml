@@ -1,0 +1,81 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Local-dev streaming bus stack: Redpanda + Redpanda Console + Schema Registry.
+# Usage: docker compose -f platform/bus/docker-compose.yml up -d
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.9
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 512M
+      - --mode dev-container
+      - --default-log-level=warn
+    ports:
+      - '19092:19092' # Kafka-compatible API (host access)
+      - '18081:18081' # Schema Registry (host access)
+      - '18082:18082' # Pandaproxy REST (host access)
+      - '9644:9644' # Admin API
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ['CMD', 'rpk', 'cluster', 'info', '--brokers', 'localhost:9092']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.6.0
+    entrypoint: /bin/sh
+    command: -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml; /app/console --config.filepath=/tmp/config.yml'
+    environment:
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+          schemaRegistry:
+            enabled: true
+            urls: ["http://redpanda:8081"]
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda:9644"]
+    ports:
+      - '8080:8080'
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  topic-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.9
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        # Phase 1 wires only the two normalized topics. Phase 2 reintroduces
+        # llm.usage.raw.<provider>; Phase 4 reintroduces the scoring/policy/
+        # routing topics alongside their canonical schemas.
+        for topic in \
+          llm.usage.normalized \
+          llm.runtime.normalized; do
+          rpk topic create "$$topic" --brokers redpanda:9092 --partitions 4 2>/dev/null || true
+          rpk topic create "$${topic}.dlq" --brokers redpanda:9092 --partitions 1 2>/dev/null || true
+        done
+        echo "Topics created."
+    restart: on-failure
+
+volumes:
+  redpanda-data:

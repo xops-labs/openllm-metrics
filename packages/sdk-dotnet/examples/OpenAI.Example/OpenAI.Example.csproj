@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>OpenLLMMetrics.Examples.OpenAi</RootNamespace>
+    <AssemblyName>OpenLLM.Metrics.Examples.OpenAI</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\OpenLLM.Metrics\OpenLLM.Metrics.csproj" />
+  </ItemGroup>
+
+</Project>

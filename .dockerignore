@@ -1,0 +1,29 @@
+# Build context is the repo root for all service images. Exclude artifacts that
+# must never be copied into a build: dependency trees (their symlinks point at
+# host paths that don't exist in the container), framework build output, VCS and
+# agent state, local env files, and logs. Keeping these out also shrinks the
+# build context dramatically.
+
+# Node / pnpm
+**/node_modules
+**/.next
+**/.turbo
+**/.pnpm-store
+
+# VCS and tooling state
+.git
+.github
+.claude
+
+# Local env and secrets (never bake into an image)
+.env
+**/.env.local
+**/.env.*.local
+
+# Logs, coverage, OS cruft
+**/*.log
+**/coverage
+**/.DS_Store
+
+# Don't ship Dockerfiles/compose into the build context payload
+**/Dockerfile.debug

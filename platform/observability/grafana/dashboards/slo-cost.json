@@ -1,0 +1,343 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Cost-per-call SLO view: cost-per-call vs target, monthly trend, error-budget remaining. Powered by the SLO recording rules at platform/slo/prometheus/recording-rules.yaml and the estimated-cost counter llm_estimated_cost_usd (F017).",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "OpenLLM Metrics SLO framework docs",
+      "tooltip": "How to author SLOs and read these dashboards",
+      "type": "link",
+      "url": "https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md"
+    }
+  ],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "Cost overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Current 1h average cost per LLM call. The SLO bound shown in the threshold band is $0.02; the SLO objective requires this metric to stay under the bound for >=95% of the rolling 30-day window.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 4,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.015 },
+              { "color": "red", "value": 0.02 }
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "sum(rate(llm_estimated_cost_usd{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[1h])) / clamp_min(sum(rate(llm_gateway_requests_total{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[1h])), 1)",
+          "instant": true,
+          "legendFormat": "Cost per call",
+          "refId": "A"
+        }
+      ],
+      "title": "Cost per call (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Fraction of the 30-day cost-per-call error budget still available. 1.0 = full budget, 0.0 = budget exhausted.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 2,
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.25 },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.75 }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
+      "id": 2,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "avg(slo:cost_per_call:budget_remaining:30d{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"})",
+          "instant": true,
+          "legendFormat": "Budget remaining",
+          "refId": "A"
+        }
+      ],
+      "title": "30d error budget remaining",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Estimated 30-day spend if the current 7-day cost rate continues. A rough early signal -- not a billing-grade projection.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "(sum(increase(llm_estimated_cost_usd{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[7d])) / 7) * 30",
+          "instant": true,
+          "legendFormat": "Forecast 30d",
+          "refId": "A"
+        }
+      ],
+      "title": "Forecast monthly spend",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "id": 101,
+      "panels": [],
+      "title": "Cost trend",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Rolling cost per call at 1h, 6h, 1d, and 3d windows alongside the SLO bound. Operators see at a glance whether cost-per-call is trending toward the budget ceiling.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "USD / call",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "currencyUSD"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "SLO bound ($0.02)" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 8 },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "sum(rate(llm_estimated_cost_usd{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[1h])) / clamp_min(sum(rate(llm_gateway_requests_total{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[1h])), 1)",
+          "legendFormat": "1h",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "sum(rate(llm_estimated_cost_usd{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[6h])) / clamp_min(sum(rate(llm_gateway_requests_total{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[6h])), 1)",
+          "legendFormat": "6h",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "sum(rate(llm_estimated_cost_usd{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[1d])) / clamp_min(sum(rate(llm_gateway_requests_total{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[1d])), 1)",
+          "legendFormat": "1d",
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "sum(rate(llm_estimated_cost_usd{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[3d])) / clamp_min(sum(rate(llm_gateway_requests_total{tenant=~\"$tenant\",team=~\"$team\",app=~\"$app\"}[3d])), 1)",
+          "legendFormat": "3d",
+          "refId": "D"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "vector(0.02)",
+          "legendFormat": "SLO bound ($0.02)",
+          "refId": "E"
+        }
+      ],
+      "title": "Cost per call vs SLO bound",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["openllm-metrics", "slo", "cost"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "Prometheus", "value": "openllm-prometheus" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Data source",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "allValue": ".*",
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values(llm_gateway_requests_total, tenant)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Tenant",
+        "multi": true,
+        "name": "tenant",
+        "query": { "query": "label_values(llm_gateway_requests_total, tenant)", "refId": "tenant" },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values(llm_gateway_requests_total{tenant=~\"$tenant\"}, team)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Team",
+        "multi": true,
+        "name": "team",
+        "query": {
+          "query": "label_values(llm_gateway_requests_total{tenant=~\"$tenant\"}, team)",
+          "refId": "team"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values(llm_gateway_requests_total{tenant=~\"$tenant\",team=~\"$team\"}, app)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "App",
+        "multi": true,
+        "name": "app",
+        "query": {
+          "query": "label_values(llm_gateway_requests_total{tenant=~\"$tenant\",team=~\"$team\"}, app)",
+          "refId": "app"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "OpenLLM Metrics - SLO Cost",
+  "uid": "openllm-slo-cost",
+  "version": 1,
+  "weekStart": ""
+}

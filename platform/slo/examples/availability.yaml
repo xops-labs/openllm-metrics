@@ -1,0 +1,31 @@
+# Example SLO: gateway availability (success ratio) above 99.5% of requests
+# over a rolling 30-day window.
+#
+# Reads:    llm_requests_total and llm_errors_total from the canonical metric
+#           registry (packages/contracts/metrics/go/registry.go). Availability
+#           is computed as 1 - (errors / requests). The recording rules express
+#           the same formula at sub-window resolution.
+# Filters:  tenant=acme, team=customer-platform, app=support-bot. Provider and
+#           model are intentionally omitted so the SLO reflects the user-visible
+#           experience regardless of which provider currently serves traffic.
+# Window:   30d compliance accounting; burn-rate alerts evaluate 1h/6h/1d/3d.
+
+id: acme-support-bot-availability
+name: 'Support bot availability > 99.5%'
+description: |
+  The acme support bot must serve at least 99.5% of LLM-backed responses
+  successfully over the rolling 30-day window. Availability is provider-agnostic
+  by design — if the bot falls back to a redundant provider, that still counts
+  as a success.
+tenant: acme
+team: customer-platform
+app: support-bot
+objective_type: availability
+target: 0.995
+window: 30d
+version: 1
+created_at: '2026-05-18T00:00:00Z'
+owner: customer-platform@acme.example
+notification_channels:
+  - slack-customer-platform
+  - pagerduty-customer-platform

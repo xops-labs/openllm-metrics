@@ -1,0 +1,47 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Grafana dashboard provider — observability stack (SLO dashboard pack).
+#
+# This provisioning config loads the three SLO dashboards under
+# platform/observability/grafana/dashboards/ into a Grafana instance.
+# Mount this file into the Grafana container at:
+#   /etc/grafana/provisioning/dashboards/slo-dashboards.yml
+#
+# The dashboard JSON files must be mounted at the path declared in
+# options.path below. In the compose observability stack, mount:
+#   platform/observability/grafana/dashboards/ -> /var/lib/grafana/dashboards/slo/
+#
+# Datasource requirement:
+#   A Prometheus datasource named "Prometheus" (or with the UID "prometheus")
+#   must exist. All SLO dashboard panels reference this datasource by uid
+#   "${datasource}" which resolves via the dashboard variable at the top of
+#   each dashboard.
+#
+# Dashboard contents:
+#   slo-latency.json      — p99 latency SLO: error budget remaining, burn rate,
+#                           p50/p95/p99 latency percentile panels.
+#   slo-availability.json — availability SLO: uptime %, error budget remaining,
+#                           error spike timeline.
+#   slo-cost.json         — cost-per-call SLO: cost vs target, monthly trend,
+#                           error-budget remaining.
+#
+# All three dashboards read from the SLO recording rules at
+# platform/slo/prometheus/recording-rules.yaml and from the raw source series:
+# llm_gateway_latency_seconds and llm_gateway_requests_total (gateway, F018)
+# and llm_estimated_cost_usd (cost pipeline, F017). No external series
+# are required.
+
+apiVersion: 1
+
+providers:
+  - name: openllm-slo-dashboards
+    orgId: 1
+    folder: OpenLLM Metrics — SLO
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/slo
+      foldersFromFilesStructure: false

@@ -1,0 +1,94 @@
+# OpenLLM Metrics — OpenTelemetry Collector reference config (staging)
+#
+# Central Collector deployment. Traces export via OTLP/gRPC to a Tempo or
+# Jaeger backend; metrics export via remote-write to the Prometheus-compatible
+# TSDB; logs export via OTLP/gRPC to a Loki gateway.
+#
+# Endpoints, credentials, and TLS material are injected at deploy time —
+# never commit secrets here. See SECURITY.md.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Defense-in-depth redaction. Mirror of platform/observability/otel_alignment.md.
+  attributes/redact:
+    actions:
+      - key: authorization
+        action: delete
+      - key: api_key
+        action: delete
+      - key: x-api-key
+        action: delete
+      - key: secret
+        action: delete
+      - key: password
+        action: delete
+      - key: token
+        action: delete
+      - key: prompt
+        action: delete
+      - key: completion
+        action: delete
+      - key: messages
+        action: delete
+      - key: input
+        action: delete
+      - key: output
+        action: delete
+      - key: content
+        action: delete
+
+  batch:
+    send_batch_size: 8192
+    timeout: 5s
+
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: staging
+        action: upsert
+
+  # Staging samples 100% per F006 README §9. Sampling escalation moves to
+  # production.yaml.
+  probabilistic_sampler:
+    sampling_percentage: 100
+
+exporters:
+  otlp/traces:
+    endpoint: ${env:OTLP_TRACES_ENDPOINT}
+    tls:
+      insecure: false
+  prometheusremotewrite:
+    endpoint: ${env:PROM_REMOTE_WRITE_ENDPOINT}
+    headers:
+      Authorization: Bearer ${env:PROM_REMOTE_WRITE_TOKEN}
+    resource_to_telemetry_conversion:
+      enabled: true
+  otlp/logs:
+    endpoint: ${env:OTLP_LOGS_ENDPOINT}
+    tls:
+      insecure: false
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [attributes/redact, resource, probabilistic_sampler, batch]
+      exporters: [otlp/traces]
+    metrics:
+      receivers: [otlp]
+      processors: [attributes/redact, resource, batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [attributes/redact, resource, batch]
+      exporters: [otlp/logs]
+  telemetry:
+    logs:
+      level: info

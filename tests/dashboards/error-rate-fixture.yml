@@ -1,0 +1,70 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# promtool test rules fixture for LLMHighErrorRate.
+#
+# Models a per-(tenant, provider, model) series where the request rate is
+# constant and the error rate is initially 0% then jumps to ~20% — both
+# the 5% warning and 15% critical thresholds should fire.
+#
+# Run:
+#   docker run --rm --entrypoint promtool \
+#     -v "$PWD:/work" prom/prometheus:v2.52.0 \
+#     test rules /work/tests/dashboards/error-rate-fixture.yml
+
+rule_files:
+  - ../../packages/dashboards/prometheus-alerts/llm-error-rate.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: error_rate_fires_when_above_15_percent
+    input_series:
+      # Requests increment by 100 every minute for 30 minutes; errors are
+      # 0 for the first 10 minutes, then 20/min — a 20% error rate.
+      - series: 'llm_requests_total{provider="openai",model="gpt-4o-mini",tenant="acme",env="prod"}'
+        values: '0+100x30'
+      - series: 'llm_errors_total{provider="openai",model="gpt-4o-mini",tenant="acme",env="prod"}'
+        values: '0+0x10 0+20x20'
+    alert_rule_test:
+      # 5 minutes after the spike: warning `for: 10m` not yet satisfied,
+      # critical `for: 5m` not yet satisfied.
+      - eval_time: 15m
+        alertname: LLMHighErrorRate
+        exp_alerts: []
+
+      # 20 minutes after the spike: both warning and critical should be firing.
+      - eval_time: 25m
+        alertname: LLMHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              alertname: LLMHighErrorRate
+              severity: warning
+              tenant: acme
+              provider: openai
+              model: gpt-4o-mini
+              component: reliability
+            exp_annotations:
+              summary: 'LLM error rate >5% on openai/gpt-4o-mini (acme)'
+              runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-error-rate.md'
+              description: |
+                Error rate for tenant=acme, provider=openai,
+                model=gpt-4o-mini is 20% over the last
+                5 minutes (threshold 5%). Validate the provider status page and
+                inspect llm_errors_total by error_type for the dominant reason.
+          - exp_labels:
+              alertname: LLMHighErrorRate
+              severity: critical
+              tenant: acme
+              provider: openai
+              model: gpt-4o-mini
+              component: reliability
+            exp_annotations:
+              summary: 'CRITICAL LLM error rate >15% on openai/gpt-4o-mini (acme)'
+              runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-error-rate.md'
+              description: |
+                Error rate for tenant=acme, provider=openai,
+                model=gpt-4o-mini is 20% — page on-call.
+                Consider triggering fallback to a redundant provider or model while
+                investigating.

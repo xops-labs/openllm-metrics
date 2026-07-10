@@ -1,0 +1,27 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Decision explainability service (F036, OSS-safe read surface) — wired for the
+# quickstart compose. Renders routing-decision records; the OSS no-op decider
+# writes minimal entries (the rich decider is custom).
+#
+# Pre-conditions for end-to-end operation:
+#   - Postgres has the control_plane.routing_decisions table. Apply the
+#     control_plane migrations.
+#
+# DSN is read from the env var named by database.dsn_env (OPENLLM_DECISION_DSN).
+
+server:
+  port: 8094
+  max_page_size: 500
+  default_page_size: 100
+
+database:
+  dsn_env: OPENLLM_DECISION_DSN
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-decision-service-quickstart
+  group: openllm-decision-service-quickstart
+  topic: routing.decision.v1

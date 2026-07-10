@@ -1,0 +1,87 @@
+# OpenLLM Metrics .gitignore
+
+# Build artifacts
+dist/
+build/
+out/
+target/
+bin/
+*.exe
+
+# Go
+*.test
+*.out
+coverage.out
+coverage.html
+vendor/
+go.work.sum
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+.next/
+.turbo/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# .NET
+**/bin/
+**/obj/
+*.user
+
+# Editors / IDEs
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Environment / secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!*.pub.key
+.terraform/
+*.tfstate
+*.tfstate.backup
+secrets/
+
+# Logs
+*.log
+logs/
+
+# Local docker volumes
+.docker-data/
+
+# Developer-local docker compose overrides (port remaps, mount tweaks,
+# etc.). The canonical stack lives in docker-compose.yml; this file
+# layers per-machine adjustments.
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# OpenLLM Metrics local state
+.local/
+data/
+
+# Claude Code user-local settings (not project shared)
+.claude/settings.json
+.claude/settings.local.json
+
+# Local launch/working notes — never published to the public repo
+handoff.md
+SELF-SUFFICIENT-CONSOLE-PLAN.md
+launch-issue-seeds.sh

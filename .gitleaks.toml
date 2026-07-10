@@ -1,0 +1,128 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Gitleaks configuration for OpenLLM Metrics.
+# Extends the upstream default ruleset (generic secret / high-entropy
+# detectors) with provider-specific patterns this project explicitly
+# cares about: OpenAI, Anthropic, Google AI / Vertex AI service
+# accounts, Azure OpenAI, and AWS access keys (used for Bedrock).
+#
+# Run locally:
+#   gitleaks detect --source=. --config=.gitleaks.toml --redact
+
+title = "openllm-metrics"
+
+[extend]
+# Inherit gitleaks' built-in generic-secret and high-entropy detectors.
+# Project-specific rules below extend that base.
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Provider-specific API key shapes
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "openai-api-key"
+description = "OpenAI API key (sk-... and sk-proj-... shapes)"
+regex = '''sk-(?:proj-)?[a-zA-Z0-9_\-]{20,}'''
+tags = ["provider", "openai", "api-key"]
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic Claude API key (sk-ant-...)"
+regex = '''sk-ant-(?:api03-)?[a-zA-Z0-9\-_]{20,}'''
+tags = ["provider", "anthropic", "api-key"]
+
+[[rules]]
+id = "google-ai-api-key"
+description = "Google AI / Gemini API key (AIza... shape)"
+regex = '''AIza[0-9A-Za-z\-_]{35}'''
+tags = ["provider", "google", "gemini", "api-key"]
+
+[[rules]]
+id = "google-service-account-json"
+description = "Google / Vertex AI service-account JSON private key block"
+regex = '''"type"\s*:\s*"service_account"'''
+tags = ["provider", "google", "vertex", "service-account"]
+
+[[rules]]
+id = "google-service-account-private-key"
+description = "Google service-account private_id / private_key field"
+regex = '''"private_key"\s*:\s*"-----BEGIN (?:RSA |EC )?PRIVATE KEY-----'''
+tags = ["provider", "google", "vertex", "private-key"]
+
+[[rules]]
+id = "azure-openai-key"
+description = "Azure OpenAI resource key assignment"
+regex = '''(?i)(azure[_\-]?openai[_\-]?(api[_\-]?)?key|ocp[_\-]?apim[_\-]?subscription[_\-]?key)\s*[=:]\s*['"]?[0-9a-fA-F]{32}['"]?'''
+tags = ["provider", "azure", "api-key"]
+
+[[rules]]
+id = "aws-access-key-id"
+description = "AWS access key ID (used for Bedrock and SigV4)"
+regex = '''\b(?:AKIA|ASIA)[0-9A-Z]{16}\b'''
+tags = ["provider", "aws", "bedrock", "access-key"]
+
+[[rules]]
+id = "aws-secret-access-key"
+description = "AWS secret access key assignment"
+regex = '''(?i)aws(.{0,20})?(secret|private)?[_\-]?access[_\-]?key[_\-]?(id)?\s*[=:]\s*['"][A-Za-z0-9/+=]{40}['"]'''
+tags = ["provider", "aws", "bedrock", "secret-key"]
+
+[[rules]]
+id = "generic-llm-api-key"
+description = "Generic LLM API key / token assignment"
+regex = '''(?i)(llm|model|provider|openai|anthropic|gemini|vertex|bedrock)[_\-]?(api[_\-]?key|secret|token)\s*[=:]\s*['"][a-zA-Z0-9\-_]{20,}['"]'''
+tags = ["provider", "generic", "api-key"]
+
+# ---------------------------------------------------------------------------
+# Allowlist: known-inert content
+#
+# Anything matched here is excluded from findings. Keep this list narrow:
+# only paths whose secrets are clearly demo/example/fixture, and patterns
+# whose textual shape is obviously a placeholder.
+# ---------------------------------------------------------------------------
+
+[allowlist]
+description = "Allowlist for documented placeholders, lockfiles, vendored deps, and demo fixtures"
+
+regexes = [
+  # Explicit placeholder words and patterns.
+  '''(?i)(example|placeholder|dummy|sample|fake)[_\-]?(api[_\-]?)?key''',
+  '''(?i)(your|my|the)[_\-]?(api[_\-]?)?key''',
+  '''(?i)<(key|api[_\-]?key|secret|token)>''',
+  '''(?i)\$\{[A-Z0-9_]+\}''',
+  '''(?i)\$[A-Z0-9_]{3,}_KEY''',
+  '''REPLACE_ME''',
+  '''CHANGE_ME''',
+  '''XXXXXXXX''',
+  # Documentation prefixes that are not real keys.
+  '''sk-(test|example|placeholder|fake|dummy|REPLACE)[-_a-zA-Z0-9]*''',
+  '''sk-ant-(test|example|placeholder|fake|dummy)[-_a-zA-Z0-9]*''',
+  '''AIza0{35}''',
+]
+
+paths = [
+  # Vendored and generated artifacts.
+  '''(^|/)node_modules/''',
+  '''(^|/)vendor/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+  # Lockfiles with no original secret content.
+  '''(^|/)go\.sum$''',
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)yarn\.lock$''',
+  # Demo / example / fixture data.
+  '''(^|/)\.env\.example$''',
+  '''(^|/).+\.example$''',
+  '''(^|/)examples?/''',
+  '''(^|/)fixtures?/''',
+  '''(^|/)testdata/''',
+  '''(^|/)tests?/.*\.go$''',
+  '''(^|/).+_test\.go$''',
+  # Documentation, feature specs, and design notes.
+  '''(^|/)docs?/''',
+  # This config itself contains regex patterns that resemble keys.
+  '''(^|/)\.gitleaks\.toml$''',
+]

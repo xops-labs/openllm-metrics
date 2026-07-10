@@ -1,0 +1,87 @@
+{{/*
+Copyright 2026 Yasvanth Udayakumar
+Licensed under the Apache License, Version 2.0.
+*/}}
+{{- if .Values.metricsEndpoint.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openllm-metrics.fullname" . }}-metrics-endpoint
+  labels:
+    {{- include "openllm-metrics.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics-endpoint
+    app.kubernetes.io/name: metrics-endpoint
+spec:
+  replicas: {{ .Values.metricsEndpoint.replicaCount }}
+  # RollingUpdate is safe — state is rebuilt by bus replay on every restart.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "openllm-metrics.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: metrics-endpoint
+  template:
+    metadata:
+      labels:
+        {{- include "openllm-metrics.labels" . | nindent 8 }}
+        app.kubernetes.io/component: metrics-endpoint
+        app.kubernetes.io/name: metrics-endpoint
+      {{- with .Values.metricsEndpoint.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "openllm-metrics.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: metrics-endpoint
+          image: {{ include "openllm-metrics.image" (dict "ctx" $ "svc" .Values.metricsEndpoint) | quote }}
+          imagePullPolicy: {{ include "openllm-metrics.pullPolicy" (dict "ctx" $ "svc" .Values.metricsEndpoint) }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          args:
+            - --config
+            - /etc/openllm-metrics/metrics-endpoint.yaml
+          ports:
+            - name: http
+              containerPort: {{ .Values.metricsEndpoint.service.port }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.metricsEndpoint.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.metricsEndpoint.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.metricsEndpoint.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/openllm-metrics
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "openllm-metrics.fullname" . }}-metrics-endpoint
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.metricsEndpoint.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metricsEndpoint.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metricsEndpoint.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

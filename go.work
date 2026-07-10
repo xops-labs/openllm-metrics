@@ -1,0 +1,32 @@
+// Copyright 2026 Yasvanth Udayakumar
+// Licensed under the Apache License, Version 2.0.
+
+go 1.25.0
+
+use (
+	./apps/api/analytics-service
+	./apps/api/audit-service
+	./apps/api/decision-service
+	./apps/api/metrics-endpoint
+	./apps/api/policy-service
+	./apps/gateway
+	./apps/worker/cost-mapper
+	./apps/worker/focus-ingester
+	./apps/worker/label-translator
+	./apps/worker/notifier
+	./apps/worker/quota-risk
+	./apps/worker/reconciler
+	./apps/worker/usage-poller/openai
+	./cmd/olm-audit
+	./examples/demo-generator
+	./packages/bus-client/go
+	./packages/contracts/metrics/go
+	./packages/contracts/telemetry/go
+	./packages/extensions/go
+	./packages/sdk-go
+	./packages/telemetry/go
+	./packages/telemetry/schema-lint/go
+	./platform/otel-collector/receiver/llmproviderreceiver
+	./tests/contract/metrics-endpoint
+	./tests/provider-adapters/openai
+)

@@ -1,0 +1,29 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Anthropic Claude public list prices (USD per 1,000 tokens).
+#
+# Source: https://www.anthropic.com/pricing (snapshot late 2025).
+# APPROXIMATE list prices; cached-input, batch, and committed-use discounts
+# are not reflected. Update via PR.
+provider: anthropic
+currency: USD
+unit: per_1k_tokens
+approximate: true
+effective_from: '2025-10-01T00:00:00Z'
+models:
+  - model: claude-opus-4
+    input_per_1k: 0.0150
+    output_per_1k: 0.0750
+  - model: claude-sonnet-4
+    input_per_1k: 0.0030
+    output_per_1k: 0.0150
+  - model: claude-haiku-4
+    input_per_1k: 0.00080
+    output_per_1k: 0.00400
+  - model: claude-3-5-sonnet
+    input_per_1k: 0.0030
+    output_per_1k: 0.0150
+  - model: claude-3-5-haiku
+    input_per_1k: 0.00080
+    output_per_1k: 0.00400

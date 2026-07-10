@@ -1,0 +1,31 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Policy service (F029 storage layer) — wired for the quickstart compose.
+#
+# Pre-conditions for end-to-end operation:
+#   - Postgres has the control_plane.policies / policy_versions tables. Apply
+#     the control_plane migrations (2026051803_f029_policy_schema.up.sql).
+#   - The policy JSON Schema is mounted read-only at the path below (the
+#     contracts dir is bind-mounted by the compose service).
+#
+# DSN is read from the env var named by db.dsn_env (OPENLLM_POLICY_DSN) — never
+# log it. This service is the OSS-safe data layer only; it never evaluates
+# policies (that is F030, custom).
+
+server:
+  port: 8090
+
+db:
+  dsn_env: OPENLLM_POLICY_DSN
+  max_open_conns: 10
+
+bus:
+  enabled: true
+  brokers:
+    - redpanda:9092
+  client_id: openllm-policy-service-quickstart
+  audit_topic: audit.event.v1
+
+schema:
+  path: /etc/openllm-policy-service/schema/policy.schema.json

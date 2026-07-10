@@ -1,0 +1,19 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# One-shot goose migration runner for the local compose stack.
+#
+# Built from source (no external goose image tag to trust) and shipped on
+# alpine so the compose `db-migrate` service can run a small shell loop over
+# the per-schema migration trees mounted from platform/db/. The DSN arrives
+# via environment at run time — nothing is baked into the image.
+
+ARG GO_VERSION=1.25
+FROM golang:${GO_VERSION}-alpine AS builder
+
+# Pinned goose version; keep in lockstep with tools/scripts/migrate.sh docs.
+RUN CGO_ENABLED=0 go install github.com/pressly/goose/v3/cmd/goose@v3.24.0
+
+FROM alpine:3.20
+COPY --from=builder /go/bin/goose /usr/local/bin/goose
+ENTRYPOINT ["goose"]

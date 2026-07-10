@@ -1,0 +1,97 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# promtool test rules fixture for LLMExporterStale.
+#
+# Models a poller's llm_exporter_last_success_timestamp anchored at 0
+# (the Unix epoch). promtool advances eval_time forward in seconds, so
+# (time() - llm_exporter_last_success_timestamp) == eval_time in seconds.
+# The expression carries through whatever labels the source series has,
+# so `env="prod"` propagates into the firing alert (the rule's expression
+# does not aggregate, intentionally — a single poller per environment).
+#
+# Severity boundaries (rule thresholds):
+#   - warning  : (time() - last_success) > 600  AND  for: 5m sustained
+#   - critical : (time() - last_success) > 1200 AND  for: 5m sustained
+#
+# Run:
+#   docker run --rm --entrypoint promtool \
+#     -v "$PWD:/work" prom/prometheus:v2.52.0 \
+#     test rules /work/tests/dashboards/exporter-stale-fixture.yml
+
+rule_files:
+  - ../../packages/dashboards/prometheus-alerts/llm-exporter-stale.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: exporter_stale_fires_when_no_success_for_2x_interval
+    input_series:
+      # last_success anchored at 0. Sample emitted every minute for 60
+      # minutes so the staleness clock can run.
+      - series: 'llm_exporter_last_success_timestamp{provider="openai",tenant="acme",env="prod"}'
+        values: '0+0x60'
+    alert_rule_test:
+      # 5 minutes (300s): under the 600s warning threshold, no alert.
+      - eval_time: 5m
+        alertname: LLMExporterStale
+        exp_alerts: []
+
+      # 20 minutes (1200s): warning condition has been continuously true
+      # from t=11m onward (5m + 1 eval cycle satisfies `for: 5m`). Critical
+      # condition (>1200) is only just becoming true so `for:` is not yet
+      # satisfied.
+      - eval_time: 20m
+        alertname: LLMExporterStale
+        exp_alerts:
+          - exp_labels:
+              alertname: LLMExporterStale
+              severity: warning
+              provider: openai
+              tenant: acme
+              env: prod
+              component: exporter
+            exp_annotations:
+              summary: 'LLM exporter stale for openai (acme)'
+              runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-exporter-stale.md'
+              description: |
+                The openai usage poller has not reported a successful
+                scrape for 1200 seconds (> 2x default polling
+                interval of 300s). Cost and usage dashboards are now stale. Check the
+                poller logs and provider credentials.
+
+      # 30 minutes (1800s): both warning and critical satisfied.
+      - eval_time: 30m
+        alertname: LLMExporterStale
+        exp_alerts:
+          - exp_labels:
+              alertname: LLMExporterStale
+              severity: warning
+              provider: openai
+              tenant: acme
+              env: prod
+              component: exporter
+            exp_annotations:
+              summary: 'LLM exporter stale for openai (acme)'
+              runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-exporter-stale.md'
+              description: |
+                The openai usage poller has not reported a successful
+                scrape for 1800 seconds (> 2x default polling
+                interval of 300s). Cost and usage dashboards are now stale. Check the
+                poller logs and provider credentials.
+          - exp_labels:
+              alertname: LLMExporterStale
+              severity: critical
+              provider: openai
+              tenant: acme
+              env: prod
+              component: exporter
+            exp_annotations:
+              summary: 'CRITICAL LLM exporter stale for openai (acme)'
+              runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-exporter-stale.md'
+              description: |
+                The openai usage poller has not reported a successful
+                scrape for 1800 seconds (> 4x default polling
+                interval of 300s). FinOps signals are blind; page on-call and run
+                through platform/runbooks/llm-exporter-stale.md.

@@ -1,0 +1,20 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Analytics saved-views service (F038 Phase 3) — wired for the quickstart
+# compose.
+#
+# Pre-conditions for end-to-end operation:
+#   - Postgres has the control_plane.analytics_saved_views table. Apply the
+#     control_plane migrations (2026062501_f038_analytics_saved_views.sql).
+#
+# DSN is read from the env var named by db.dsn_env (OPENLLM_ANALYTICS_DSN) —
+# never log it. This service is the OSS-safe data layer only; it never executes
+# analytics queries, scores series, or applies routing/anomaly logic (custom).
+
+server:
+  port: 8095
+
+db:
+  dsn_env: OPENLLM_ANALYTICS_DSN
+  max_open_conns: 10

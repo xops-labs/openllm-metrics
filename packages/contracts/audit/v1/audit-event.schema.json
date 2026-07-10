@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.dev/contracts/audit/audit-event/v1",
+  "title": "AuditEvent",
+  "description": "F031 audit.event.v1 — the on-the-wire shape every producer (policy-service F029, gateway F018, admin console F032, label-mapping CRUD F017, etc.) writes onto the audit.event.v1 topic and the audit-service appends into audit.audit_entries.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "tenant_id",
+    "actor",
+    "action",
+    "resource",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Globally unique event identifier (UUIDv7 recommended). Idempotency key."
+    },
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Tenant UUID. The audit chain is per-tenant."
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["human", "service", "system"]
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable identifier of the actor (user UUID, service-principal UUID, system component name)."
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "ip": {
+          "type": "string",
+          "description": "Source IP of the request. Producers should record only the client IP, never internal load-balancer IPs."
+        }
+      }
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "Dotted-namespace action verb, e.g. policy.create, policy.update, routing.override, console.login, label_mapping.create."
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Resource kind, e.g. policy, routing_rule, label_mapping, user, service_principal."
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "description": "Action-specific details. NEVER contains prompts, completions, passwords, API keys, OAuth tokens, or bearer tokens. The audit-service runs a defense-in-depth redact step on insert.",
+      "additionalProperties": true,
+      "not": {
+        "anyOf": [
+          { "required": ["password"] },
+          { "required": ["api_key"] },
+          { "required": ["token"] },
+          { "required": ["bearer"] },
+          { "required": ["authorization"] },
+          { "required": ["prompt"] },
+          { "required": ["completion"] }
+        ]
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp produced by the originating service. The audit-service uses NOW() for the persisted row's created_at; this field records the producer-side timestamp for skew diagnosis."
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "W3C trace context trace-id, if available."
+    }
+  }
+}

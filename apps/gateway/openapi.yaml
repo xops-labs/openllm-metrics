@@ -1,0 +1,661 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+openapi: 3.1.0
+info:
+  title: OpenLLM Metrics - gateway
+  version: '0.1.0'
+  description: |
+    F018 LLM API reverse proxy. Forwards requests to the appropriate provider
+    upstream (OpenAI, Anthropic, Google Gemini/Vertex, AWS Bedrock, Azure
+    OpenAI), captures telemetry (latency, token usage, status, error type)
+    without buffering or logging any request or response body, and publishes
+    a runtime event to the streaming bus.
+
+    ## Two-listener architecture
+
+    The gateway runs two separate HTTP listeners so the proxy port stays
+    pure-proxy:
+
+    - **Proxy listener** (default :8080) — mounts the pass-through proxy
+      handler at `/`. All provider API routes land here. This listener is
+      the only one that must be reachable by API clients.
+    - **Metrics listener** (default :8081) — exposes `/metrics`, `/healthz`,
+      `/readyz` on a side-channel port for orchestrators and Prometheus.
+
+    This document describes **both** listeners under separate servers.
+
+    ## Provider route matching
+
+    The proxy selects the upstream provider from the inbound URL path:
+
+    | Path prefix / pattern                                             | Provider       | Operation  |
+    |-------------------------------------------------------------------|----------------|------------|
+    | `POST /v1/chat/completions`                                       | openai         | chat       |
+    | `POST /v1/embeddings`                                             | openai         | embedding  |
+    | `POST /v1/responses`                                              | openai         | chat       |
+    | `POST /v1/messages`                                               | anthropic      | chat       |
+    | `POST /v1beta/models/{model}:generateContent`                     | google         | chat       |
+    | `POST /v1beta/models/{model}:streamGenerateContent`               | google         | chat       |
+    | `POST /model/{modelId}/invoke`                                    | bedrock        | chat       |
+    | `POST /model/{modelId}/invoke-with-response-stream`               | bedrock        | chat       |
+    | `POST /openai/deployments/{deployment}/chat/completions`          | azure_openai   | chat       |
+
+    Unrecognized paths return 502. The proxy forwards the full request body
+    and response body untouched — **bodies are never logged, traced, or
+    persisted**.
+
+    ## Multi-tenant context (proxy listener)
+
+    Inbound `X-OLM-*` headers supply the per-request labels that appear on
+    every telemetry event. When a header is absent, the configured default
+    for that label is used instead.
+
+    | Header              | Label    | Default configured in YAML |
+    |---------------------|----------|----------------------------|
+    | `X-OLM-Tenant`      | tenant   | `defaults.tenant`          |
+    | `X-OLM-Team`        | team     | `defaults.team`            |
+    | `X-OLM-App`         | app      | `defaults.app`             |
+    | `X-OLM-Env`         | env      | `defaults.env`             |
+    | `X-OLM-Project`     | project  | `defaults.project`         |
+
+    ## Security invariants
+
+    - The `Authorization` header is forwarded to the upstream untouched and
+      is **never** logged.
+    - Request and response bodies are **never** logged, traced, or persisted.
+      Only the most recent bounded SSE chunk is used for usage parsing.
+    - Only the SHA-256 of `X-Request-ID` ever leaves this process.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: http://localhost:8080
+    description: Proxy listener — local development (default port)
+  - url: http://localhost:8081
+    description: Metrics listener — local development (default port)
+paths:
+  # ---------------------------------------------------------------------------
+  # Proxy listener routes (:8080)
+  # ---------------------------------------------------------------------------
+
+  /v1/chat/completions:
+    post:
+      summary: OpenAI Chat Completions (proxied).
+      description: |
+        Pass-through to the configured OpenAI upstream
+        (`https://api.openai.com` by default). The request and response body
+        are forwarded verbatim; the gateway captures latency, token usage
+        (parsed from the response), and status code without buffering.
+
+        Streaming responses (`stream: true` in the body) are proxied
+        immediately with no internal buffering. Only a bounded snapshot
+        (default 256 KiB) of the most recent SSE chunk is kept for usage
+        parsing.
+      operationId: proxyOpenAIChatCompletions
+      parameters:
+        - $ref: '#/components/parameters/OLMTenant'
+        - $ref: '#/components/parameters/OLMTeam'
+        - $ref: '#/components/parameters/OLMApp'
+        - $ref: '#/components/parameters/OLMEnv'
+        - $ref: '#/components/parameters/OLMProject'
+        - $ref: '#/components/parameters/OLMRequestID'
+        - $ref: '#/components/parameters/OLMRetryCount'
+      requestBody:
+        description: |
+          OpenAI Chat Completions request body. Forwarded verbatim — see the
+          OpenAI API reference for the full schema.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ProxiedSuccess'
+        '400':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '401':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '429':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '500':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '502':
+          $ref: '#/components/responses/GatewayError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1/embeddings:
+    post:
+      summary: OpenAI Embeddings (proxied).
+      description: Pass-through to the configured OpenAI upstream.
+      operationId: proxyOpenAIEmbeddings
+      parameters:
+        - $ref: '#/components/parameters/OLMTenant'
+        - $ref: '#/components/parameters/OLMTeam'
+        - $ref: '#/components/parameters/OLMApp'
+        - $ref: '#/components/parameters/OLMEnv'
+        - $ref: '#/components/parameters/OLMProject'
+        - $ref: '#/components/parameters/OLMRequestID'
+        - $ref: '#/components/parameters/OLMRetryCount'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ProxiedSuccess'
+        '400':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '401':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '429':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '500':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '502':
+          $ref: '#/components/responses/GatewayError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1/responses:
+    post:
+      summary: OpenAI Responses API (proxied).
+      description: Pass-through to the configured OpenAI upstream.
+      operationId: proxyOpenAIResponses
+      parameters:
+        - $ref: '#/components/parameters/OLMTenant'
+        - $ref: '#/components/parameters/OLMTeam'
+        - $ref: '#/components/parameters/OLMApp'
+        - $ref: '#/components/parameters/OLMEnv'
+        - $ref: '#/components/parameters/OLMProject'
+        - $ref: '#/components/parameters/OLMRequestID'
+        - $ref: '#/components/parameters/OLMRetryCount'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ProxiedSuccess'
+        '400':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '401':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '429':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '500':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '502':
+          $ref: '#/components/responses/GatewayError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1/messages:
+    post:
+      summary: Anthropic Messages API (proxied).
+      description: Pass-through to the configured Anthropic upstream.
+      operationId: proxyAnthropicMessages
+      parameters:
+        - $ref: '#/components/parameters/OLMTenant'
+        - $ref: '#/components/parameters/OLMTeam'
+        - $ref: '#/components/parameters/OLMApp'
+        - $ref: '#/components/parameters/OLMEnv'
+        - $ref: '#/components/parameters/OLMProject'
+        - $ref: '#/components/parameters/OLMRequestID'
+        - $ref: '#/components/parameters/OLMRetryCount'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ProxiedSuccess'
+        '400':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '401':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '429':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '500':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '502':
+          $ref: '#/components/responses/GatewayError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1beta/models/{model}:generateContent:
+    post:
+      summary: Google Gemini generateContent (proxied).
+      description: |
+        Pass-through to the configured Gemini upstream. The model name is
+        extracted from the path and recorded in the telemetry event; it is
+        not validated or re-written by the gateway.
+      operationId: proxyGeminiGenerateContent
+      parameters:
+        - name: model
+          in: path
+          required: true
+          description: Gemini model identifier (e.g. gemini-1.5-pro).
+          schema:
+            type: string
+            example: gemini-1.5-pro
+        - $ref: '#/components/parameters/OLMTenant'
+        - $ref: '#/components/parameters/OLMTeam'
+        - $ref: '#/components/parameters/OLMApp'
+        - $ref: '#/components/parameters/OLMEnv'
+        - $ref: '#/components/parameters/OLMProject'
+        - $ref: '#/components/parameters/OLMRequestID'
+        - $ref: '#/components/parameters/OLMRetryCount'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ProxiedSuccess'
+        '400':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '401':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '429':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '500':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '502':
+          $ref: '#/components/responses/GatewayError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1beta/models/{model}:streamGenerateContent:
+    post:
+      summary: Google Gemini streamGenerateContent (proxied).
+      description: Pass-through to the configured Gemini upstream (streaming).
+      operationId: proxyGeminiStreamGenerateContent
+      parameters:
+        - name: model
+          in: path
+          required: true
+          description: Gemini model identifier.
+          schema:
+            type: string
+            example: gemini-1.5-pro
+        - $ref: '#/components/parameters/OLMTenant'
+        - $ref: '#/components/parameters/OLMTeam'
+        - $ref: '#/components/parameters/OLMApp'
+        - $ref: '#/components/parameters/OLMEnv'
+        - $ref: '#/components/parameters/OLMProject'
+        - $ref: '#/components/parameters/OLMRequestID'
+        - $ref: '#/components/parameters/OLMRetryCount'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ProxiedSuccess'
+        '400':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '401':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '429':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '500':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '502':
+          $ref: '#/components/responses/GatewayError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /model/{modelId}/invoke:
+    post:
+      summary: AWS Bedrock InvokeModel (proxied).
+      description: |
+        Pass-through to the configured Bedrock upstream. The model ID is
+        extracted from the path for telemetry; it is not validated by the
+        gateway.
+      operationId: proxyBedrockInvoke
+      parameters:
+        - name: modelId
+          in: path
+          required: true
+          description: Bedrock model identifier.
+          schema:
+            type: string
+            example: anthropic.claude-3-5-sonnet-20241022-v2:0
+        - $ref: '#/components/parameters/OLMTenant'
+        - $ref: '#/components/parameters/OLMTeam'
+        - $ref: '#/components/parameters/OLMApp'
+        - $ref: '#/components/parameters/OLMEnv'
+        - $ref: '#/components/parameters/OLMProject'
+        - $ref: '#/components/parameters/OLMRequestID'
+        - $ref: '#/components/parameters/OLMRetryCount'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ProxiedSuccess'
+        '400':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '401':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '429':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '500':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '502':
+          $ref: '#/components/responses/GatewayError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /model/{modelId}/invoke-with-response-stream:
+    post:
+      summary: AWS Bedrock InvokeModelWithResponseStream (proxied).
+      description: Pass-through to the configured Bedrock upstream (streaming).
+      operationId: proxyBedrockInvokeStream
+      parameters:
+        - name: modelId
+          in: path
+          required: true
+          description: Bedrock model identifier.
+          schema:
+            type: string
+            example: anthropic.claude-3-5-sonnet-20241022-v2:0
+        - $ref: '#/components/parameters/OLMTenant'
+        - $ref: '#/components/parameters/OLMTeam'
+        - $ref: '#/components/parameters/OLMApp'
+        - $ref: '#/components/parameters/OLMEnv'
+        - $ref: '#/components/parameters/OLMProject'
+        - $ref: '#/components/parameters/OLMRequestID'
+        - $ref: '#/components/parameters/OLMRetryCount'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ProxiedSuccess'
+        '400':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '401':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '429':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '500':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '502':
+          $ref: '#/components/responses/GatewayError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /openai/deployments/{deployment}/chat/completions:
+    post:
+      summary: Azure OpenAI Chat Completions (proxied).
+      description: |
+        Pass-through to the configured Azure OpenAI upstream. The deployment
+        name is extracted from the path for telemetry. Azure has no global
+        default upstream — operators must configure `OLM_UPSTREAM_AZURE_OPENAI_URL`
+        or the `upstreams.azure_openai` YAML key.
+      operationId: proxyAzureOpenAIChatCompletions
+      parameters:
+        - name: deployment
+          in: path
+          required: true
+          description: Azure OpenAI deployment name.
+          schema:
+            type: string
+            example: gpt-4o-prod
+        - name: api-version
+          in: query
+          required: false
+          description: |
+            Azure API version query parameter forwarded verbatim to the
+            upstream (e.g. 2024-02-01).
+          schema:
+            type: string
+            example: '2024-02-01'
+        - $ref: '#/components/parameters/OLMTenant'
+        - $ref: '#/components/parameters/OLMTeam'
+        - $ref: '#/components/parameters/OLMApp'
+        - $ref: '#/components/parameters/OLMEnv'
+        - $ref: '#/components/parameters/OLMProject'
+        - $ref: '#/components/parameters/OLMRequestID'
+        - $ref: '#/components/parameters/OLMRetryCount'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ProxiedSuccess'
+        '400':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '401':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '429':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '500':
+          $ref: '#/components/responses/ProxiedProviderError'
+        '502':
+          $ref: '#/components/responses/GatewayError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  # ---------------------------------------------------------------------------
+  # Metrics listener routes (:8081)
+  # ---------------------------------------------------------------------------
+
+  /metrics:
+    get:
+      summary: Prometheus self-metrics scrape endpoint (metrics listener).
+      description: |
+        Returns the Prometheus text exposition of the gateway's own
+        operational counters (requests by provider/model/tenant/status,
+        latency histograms, token counts, retry counts, bus publish
+        success/failure). Served on the metrics listener port (default 8081).
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /healthz:
+    get:
+      summary: Liveness probe (metrics listener).
+      description: |
+        Returns 200 once the process is up and both HTTP listeners are bound.
+        Served on the metrics listener port (default 8081).
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      summary: Readiness probe (metrics listener).
+      description: |
+        Returns 200 once the gateway is ready to proxy requests. The gateway
+        always returns ready=true after startup (no bus consumer warm-up to
+        wait for). Served on the metrics listener port (default 8081).
+      operationId: getReadyz
+      responses:
+        '200':
+          description: Service is ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                ready: true
+
+components:
+  parameters:
+    OLMTenant:
+      name: X-OLM-Tenant
+      in: header
+      required: false
+      description: |
+        Tenant label attached to every telemetry event for this request.
+        Falls back to the configured `defaults.tenant` when absent.
+      schema:
+        type: string
+        example: acme-corp
+    OLMTeam:
+      name: X-OLM-Team
+      in: header
+      required: false
+      description: |
+        Team label. Falls back to `defaults.team` when absent.
+      schema:
+        type: string
+        example: platform-ai
+    OLMApp:
+      name: X-OLM-App
+      in: header
+      required: false
+      description: |
+        Application label. Falls back to `defaults.app` when absent.
+      schema:
+        type: string
+        example: recommendation-service
+    OLMEnv:
+      name: X-OLM-Env
+      in: header
+      required: false
+      description: |
+        Environment label. Falls back to `defaults.env` when absent.
+        Expected values: development | staging | production.
+      schema:
+        type: string
+        example: production
+    OLMProject:
+      name: X-OLM-Project
+      in: header
+      required: false
+      description: |
+        Project label. Falls back to `defaults.project` when absent.
+      schema:
+        type: string
+        example: search-v2
+    OLMRequestID:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: |
+        Caller-supplied request ID. Only its SHA-256 hash is recorded in
+        telemetry events — the raw ID is never logged or stored. When
+        absent, a fresh UUID is generated and hashed.
+      schema:
+        type: string
+        example: req_01j8xkyz0000000000000001
+    OLMRetryCount:
+      name: X-OLM-Retry-Count
+      in: header
+      required: false
+      description: |
+        Number of retries that preceded this attempt, as reported by the
+        caller or upstream retry middleware. Recorded in the telemetry event
+        for retry-rate analysis. Defaults to 0 when absent.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  schemas:
+    Readiness:
+      type: object
+      required:
+        - ready
+      properties:
+        ready:
+          type: boolean
+        reason:
+          type: string
+          description: Human-readable reason when ready=false.
+          example: warming
+
+  responses:
+    ProxiedSuccess:
+      description: |
+        Response proxied verbatim from the upstream provider. The content
+        type and body shape are defined by the provider's API — see the
+        provider's reference documentation. Streaming responses use
+        `text/event-stream` or `application/x-ndjson`.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+        text/event-stream:
+          schema:
+            type: string
+            description: Server-Sent Events stream.
+        application/x-ndjson:
+          schema:
+            type: string
+            description: Newline-delimited JSON stream (AWS event-stream).
+    ProxiedProviderError:
+      description: |
+        Error response proxied verbatim from the upstream provider. The
+        body shape is provider-defined. The gateway does not rewrite or
+        suppress provider error bodies.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    GatewayError:
+      description: |
+        The gateway could not reach the upstream provider (DNS failure,
+        connection refused, TLS error, or the provider upstream is not
+        configured for this path). The body is a plain-text status message;
+        the upstream error detail is **not** leaked to the caller.
+      content:
+        text/plain:
+          schema:
+            type: string
+            example: Bad Gateway
+    GatewayTimeout:
+      description: |
+        The upstream provider did not respond within the configured
+        `upstream_timeout_seconds`. The body is a plain-text status message.
+      content:
+        text/plain:
+          schema:
+            type: string
+            example: Gateway Timeout

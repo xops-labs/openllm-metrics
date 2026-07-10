@@ -1,0 +1,30 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Gateway config — wired for the quickstart compose.
+#
+# Upstream provider base URLs come from the OLM_UPSTREAM_*_URL env vars set on
+# the compose service (the config defaults to the public provider endpoints if
+# unset). Provider API keys are NEVER read here — the gateway forwards the
+# inbound Authorization header untouched.
+#
+# With no bus producer wired downstream yet, runtime events increment metrics
+# and are dropped (bus.brokers points at the quickstart Redpanda so events flow
+# once a consumer is attached).
+
+server:
+  port: 8080
+  metrics_port: 8081
+  read_header_timeout_seconds: 10
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-gateway-quickstart
+
+defaults:
+  tenant: quickstart-tenant
+  team: platform
+  app: gateway
+  env: development
+  project: quickstart

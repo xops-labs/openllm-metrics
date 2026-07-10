@@ -1,0 +1,56 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# LLM exporter staleness alerts.
+#
+# Default poller polling_interval_seconds is 300s (see
+# apps/worker/usage-poller/openai/config.example.yaml). The thresholds
+# below are derived from that default. Operators running a different
+# polling cadence should adjust the absolute seconds in the expressions
+# to keep the relationship ``threshold = N * polling_interval``.
+#
+# Severity ladder:
+#   - warning  : last successful scrape older than 2x polling_interval.
+#   - critical : last successful scrape older than 4x polling_interval.
+#
+# Runbook: platform/runbooks/llm-exporter-stale.md.
+
+groups:
+  - name: openllm_finops_exporter_health
+    interval: 60s
+    rules:
+      - alert: LLMExporterStale
+        expr: |-
+          (time() - llm_exporter_last_success_timestamp) > 600
+        for: 5m
+        labels:
+          severity: warning
+          provider: '{{ $labels.provider }}'
+          tenant: '{{ $labels.tenant }}'
+          component: exporter
+        annotations:
+          summary: 'LLM exporter stale for {{ $labels.provider }} ({{ $labels.tenant }})'
+          description: |
+            The {{ $labels.provider }} usage poller has not reported a successful
+            scrape for {{ $value | printf "%.0f" }} seconds (> 2x default polling
+            interval of 300s). Cost and usage dashboards are now stale. Check the
+            poller logs and provider credentials.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-exporter-stale.md'
+
+      - alert: LLMExporterStale
+        expr: |-
+          (time() - llm_exporter_last_success_timestamp) > 1200
+        for: 5m
+        labels:
+          severity: critical
+          provider: '{{ $labels.provider }}'
+          tenant: '{{ $labels.tenant }}'
+          component: exporter
+        annotations:
+          summary: 'CRITICAL LLM exporter stale for {{ $labels.provider }} ({{ $labels.tenant }})'
+          description: |
+            The {{ $labels.provider }} usage poller has not reported a successful
+            scrape for {{ $value | printf "%.0f" }} seconds (> 4x default polling
+            interval of 300s). FinOps signals are blind; page on-call and run
+            through platform/runbooks/llm-exporter-stale.md.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-exporter-stale.md'

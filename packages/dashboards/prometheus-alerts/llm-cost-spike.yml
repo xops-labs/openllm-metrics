@@ -1,0 +1,82 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# LLM cost-spike alerts.
+#
+# Compares the current 1-hour spend rate against the average spend rate
+# over the prior 7 days (excluding the last 24 hours so a short-lived
+# anomaly cannot dilute its own baseline). The expression is grouped by
+# (tenant, team, provider) so a runaway prod team does not page on-call
+# for an unrelated tenant.
+#
+# Severity ladder:
+#   - warning  : current rate >= 2x the 7d baseline.
+#   - critical : current rate >= 3x the 7d baseline.
+#
+# Runbook: platform/runbooks/llm-cost-spike.md.
+
+groups:
+  - name: openllm_finops_cost
+    interval: 60s
+    rules:
+      - alert: LLMCostSpike
+        expr: |-
+          (
+            sum by (tenant, team, provider) (
+              rate(llm_cost_usd_total[1h])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, provider) (
+                avg_over_time(rate(llm_cost_usd_total[1h] offset 1d)[6d:1h])
+              ),
+              0.0001
+            )
+          ) >= 2
+        for: 15m
+        labels:
+          severity: warning
+          team: '{{ $labels.team }}'
+          tenant: '{{ $labels.tenant }}'
+          provider: '{{ $labels.provider }}'
+          component: finops
+        annotations:
+          summary: 'LLM cost rate is 2x the 7d baseline for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.provider }}'
+          description: |
+            Current 1h spend rate for tenant={{ $labels.tenant }},
+            team={{ $labels.team }}, provider={{ $labels.provider }} is
+            {{ $value | printf "%.2f" }}x the 7-day baseline. Investigate whether
+            a new model, looped retry, or noisy app is driving the spike before
+            it consumes the team's monthly budget.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-cost-spike.md'
+
+      - alert: LLMCostSpike
+        expr: |-
+          (
+            sum by (tenant, team, provider) (
+              rate(llm_cost_usd_total[1h])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, provider) (
+                avg_over_time(rate(llm_cost_usd_total[1h] offset 1d)[6d:1h])
+              ),
+              0.0001
+            )
+          ) >= 3
+        for: 10m
+        labels:
+          severity: critical
+          team: '{{ $labels.team }}'
+          tenant: '{{ $labels.tenant }}'
+          provider: '{{ $labels.provider }}'
+          component: finops
+        annotations:
+          summary: 'CRITICAL LLM cost rate is 3x+ the 7d baseline for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.provider }}'
+          description: |
+            Current 1h spend rate for tenant={{ $labels.tenant }},
+            team={{ $labels.team }}, provider={{ $labels.provider }} is
+            {{ $value | printf "%.2f" }}x the 7-day baseline. Page on-call.
+            Consider blocking expensive models or enabling fallback while
+            triaging.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-cost-spike.md'

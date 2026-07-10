@@ -1,0 +1,31 @@
+OpenLLM Metrics installed in namespace "{{ .Release.Namespace }}" as release
+"{{ .Release.Name }}" (chart {{ include "openllm-metrics.chart" . }}).
+
+{{- if .Values.openaiPoller.enabled }}
+The OpenAI poller is reading its API key from secret:
+  {{ .Values.secrets.openaiAdminApiKey.secretName }}#{{ .Values.secrets.openaiAdminApiKey.secretKey }}
+
+Confirm scrape health:
+  kubectl --namespace {{ .Release.Namespace }} port-forward \
+    deploy/{{ include "openllm-metrics.fullname" . }}-openai-poller 8080:8080
+  curl http://localhost:8080/metrics | grep llm_exporter_
+{{- end }}
+
+{{- if .Values.metricsEndpoint.enabled }}
+
+The aggregator service is reachable inside the cluster at:
+  {{ include "openllm-metrics.fullname" . }}-metrics-endpoint.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.metricsEndpoint.service.port }}
+
+Scrape it from your laptop:
+  kubectl --namespace {{ .Release.Namespace }} port-forward \
+    svc/{{ include "openllm-metrics.fullname" . }}-metrics-endpoint {{ .Values.metricsEndpoint.service.port }}
+  curl http://localhost:{{ .Values.metricsEndpoint.service.port }}/metrics
+{{- end }}
+
+{{- if .Values.prometheus.serviceMonitor.enabled }}
+
+A Prometheus Operator ServiceMonitor was created. Confirm your Prometheus
+instance selects it:
+  kubectl --namespace {{ .Release.Namespace }} get servicemonitor \
+    {{ include "openllm-metrics.fullname" . }}-metrics-endpoint
+{{- end }}

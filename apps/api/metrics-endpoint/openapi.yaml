@@ -1,0 +1,99 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+openapi: 3.1.0
+info:
+  title: OpenLLM Metrics - metrics-endpoint
+  version: '0.1.0'
+  description: |
+    F010 Prometheus aggregator service. Consumes normalized telemetry from
+    the streaming bus, aggregates into in-memory counter families, and
+    exposes them via the Prometheus text exposition format on /metrics.
+
+    The /metrics body is the Prometheus text exposition format
+    (Content-Type: text/plain; version=0.0.4; charset=utf-8). It is NOT
+    described in this OpenAPI document because the format is owned upstream
+    by Prometheus / OpenMetrics. See README.md for the metric families this
+    service exposes and the F008 metric registry for label semantics.
+
+    /healthz and /readyz are described below so orchestrators (k8s, ECS,
+    nomad) can use this spec for probe wiring.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: http://localhost:9090
+    description: Local development
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe.
+      description: |
+        Returns 200 once the process is up and the HTTP server is bound.
+        Does NOT consult bus or aggregator state — use /readyz for that.
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+  /readyz:
+    get:
+      summary: Readiness probe.
+      description: |
+        Returns 200 only after the consumer has observed at least one
+        event from the bus (i.e. the aggregator has populated initial
+        state). Returns 503 while warming up so schedulers hold scrape /
+        traffic.
+      operationId: getReadyz
+      responses:
+        '200':
+          description: Service is ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                ready: true
+        '503':
+          description: Service is warming up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                ready: false
+                reason: warming
+  /metrics:
+    get:
+      summary: Prometheus scrape endpoint.
+      description: |
+        Returns the Prometheus text exposition (version 0.0.4) of every
+        counter family currently held in the aggregator, followed by the
+        aggregator's own self-metrics (rejected events, processed events,
+        live series count). The body shape is documented in README.md and
+        upstream at https://prometheus.io/docs/instrumenting/exposition_formats/.
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+components:
+  schemas:
+    Readiness:
+      type: object
+      required:
+        - ready
+      properties:
+        ready:
+          type: boolean
+          description: True once the aggregator has populated initial state.
+        reason:
+          type: string
+          description: Human-readable reason when ready=false.
+          example: warming

@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.org/schemas/policy/v1/policy.schema.json",
+  "title": "OpenLLM Metrics Policy Document v1",
+  "description": "Declarative policy document for the OpenLLM Metrics control plane. This contract describes the SHAPE of a policy only. Evaluation semantics, rule precedence, budget arithmetic, exception ordering, and enforcement decisions are intentionally NOT specified here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "tenant", "version", "effective_from", "scope", "rules"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable identifier for the policy (UUID).",
+      "format": "uuid"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name unique within the tenant.",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "description": {
+      "type": "string",
+      "description": "Free-form description of intent. Not consumed by any evaluator.",
+      "maxLength": 4000
+    },
+    "tenant": {
+      "type": "string",
+      "description": "Tenant identifier (UUID). Multi-tenant boundary; every policy belongs to exactly one tenant.",
+      "format": "uuid"
+    },
+    "version": {
+      "type": "integer",
+      "description": "Monotonically increasing version number assigned by the control plane on each write.",
+      "minimum": 1
+    },
+    "effective_from": {
+      "type": "string",
+      "description": "RFC 3339 timestamp at which this version of the policy becomes effective.",
+      "format": "date-time"
+    },
+    "effective_to": {
+      "type": ["string", "null"],
+      "description": "RFC 3339 timestamp at which this version stops being effective. Null means open-ended.",
+      "format": "date-time"
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Whether the policy is active. Disabled policies are kept for audit but ignored by downstream consumers.",
+      "default": true
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "rules": {
+      "type": "array",
+      "description": "Ordered list of rule data objects. The data shape is defined; rule semantics, ordering, and precedence are intentionally not specified here.",
+      "items": {
+        "$ref": "#/$defs/rule"
+      },
+      "minItems": 1,
+      "maxItems": 200
+    },
+    "labels": {
+      "type": "object",
+      "description": "Opaque tag map for governance reporting (e.g. owner, ticket, cost-center).",
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 200
+      }
+    }
+  },
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "description": "The set of platform principals this policy may apply to. Empty arrays mean 'any value'.",
+      "additionalProperties": false,
+      "properties": {
+        "teams": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "apps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "envs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["dev", "development", "staging", "prod", "production"]
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["openai", "anthropic", "google", "azure_openai", "bedrock"]
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "uniqueItems": true,
+          "default": []
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "description": "A single rule data object. The 'kind' selects the parameter shape; semantic interpretation is intentionally not described here.",
+      "additionalProperties": false,
+      "required": ["kind", "parameters"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Optional stable identifier for this rule within the policy. Used by audit references.",
+          "maxLength": 200
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["budget", "allow_model", "deny_model", "rate_limit", "require_tag"]
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Rule-kind-specific parameters. See oneOf below for per-kind shape.",
+          "additionalProperties": true
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "budget"
+            },
+            "parameters": {
+              "$ref": "#/$defs/budgetParams"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "allow_model"
+            },
+            "parameters": {
+              "$ref": "#/$defs/modelListParams"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "deny_model"
+            },
+            "parameters": {
+              "$ref": "#/$defs/modelListParams"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "rate_limit"
+            },
+            "parameters": {
+              "$ref": "#/$defs/rateLimitParams"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "require_tag"
+            },
+            "parameters": {
+              "$ref": "#/$defs/requireTagParams"
+            }
+          }
+        }
+      ]
+    },
+    "budgetParams": {
+      "type": "object",
+      "description": "Budget rule parameter shape. The amount and period are recorded as data; budget arithmetic, burn computation, and enforcement decisions are intentionally not specified here.",
+      "additionalProperties": false,
+      "required": ["amount_usd", "period"],
+      "properties": {
+        "amount_usd": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "period": {
+          "type": "string",
+          "enum": ["daily", "weekly", "monthly"]
+        },
+        "applies_to": {
+          "type": "string",
+          "enum": ["tenant", "team", "app", "project"],
+          "default": "tenant"
+        }
+      }
+    },
+    "modelListParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["models"],
+      "properties": {
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "rateLimitParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "window_seconds"],
+      "properties": {
+        "requests": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "applies_to": {
+          "type": "string",
+          "enum": ["tenant", "team", "app", "user"],
+          "default": "tenant"
+        }
+      }
+    },
+    "requireTagParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tags"],
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

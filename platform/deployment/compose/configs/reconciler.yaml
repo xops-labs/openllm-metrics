@@ -1,0 +1,45 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Reconciler config — wired for the quickstart compose.
+#
+# Pre-conditions for end-to-end operation:
+#   - Postgres has the control_plane.reconciliation_results table. Run the
+#     control_plane migrations (platform/db/control_plane/migrations)
+#     before bringing this service up.
+#   - Both upstream topics (`llm.cost.estimated`, `llm.usage.reconciled`) are
+#     populated. The cost-mapper produces the former; the focus-ingester
+#     produces the latter. The quickstart wires both producers — but neither
+#     emits until the upstream `llm-usage-exporter` (and, for the runtime
+#     leg, a gateway/SDK producer) are connected.
+#
+# DSN is read from the env var named by database.dsn_env
+# (`OPENLLM_CONTROL_PLANE_DSN`) — never log it.
+
+server:
+  port: 8084
+
+window:
+  size_seconds: 3600
+  # 48 hours by default; trimmed to 6 hours in the quickstart so the closer
+  # exercises end-to-end on a fresh stack without an overnight wait.
+  grace_seconds: 21600
+
+closer:
+  scan_interval_seconds: 300
+
+database:
+  dsn_env: OPENLLM_CONTROL_PLANE_DSN
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-reconciler-quickstart
+  consumer_group: openllm-reconciler-quickstart
+  estimated_topic: llm.cost.estimated
+  reconciled_topic: llm.usage.reconciled
+  window_topic: llm.reconciliation.window
+
+defaults:
+  tenant: quickstart-tenant
+  env: development

@@ -1,0 +1,25 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# /metrics aggregator service config — wired for the quickstart compose.
+#
+# Differs from apps/api/metrics-endpoint/config.example.yaml in one way:
+#   - `bus.brokers` points at the in-compose Redpanda broker (`redpanda:9092`)
+#     instead of `localhost:19092` (which is the host-exposed advertised port).
+#
+# Everything else mirrors the upstream example and is documented there.
+
+server:
+  port: 9090
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-metrics-endpoint-quickstart
+  group: openllm-metrics-endpoint-quickstart
+  topics:
+    - llm.usage.normalized
+    - llm.runtime.normalized
+
+replay:
+  window_hours: 168

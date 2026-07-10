@@ -1,0 +1,38 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+
+apiVersion: v2
+name: openllm-metrics
+description: |
+  OpenLLM Metrics — Phase 1 services (OpenAI usage poller + /metrics
+  aggregator) packaged for Kubernetes. Streaming bus, Postgres, and
+  TSDB are intentionally external dependencies — point this chart at
+  whichever Redpanda/Kafka cluster and Prometheus-compatible TSDB the
+  cluster already runs.
+type: application
+# Chart version follows SemVer; bump on every chart change.
+version: 0.1.0
+# appVersion tracks the upstream OpenLLM Metrics release. Pin in lockstep
+# with the image tags in values.yaml.
+appVersion: '0.1.0'
+
+home: https://github.com/yasvanth511/openllm-metrics-oss
+sources:
+  - https://github.com/yasvanth511/openllm-metrics-oss
+
+keywords:
+  - openllm
+  - llm
+  - observability
+  - prometheus
+  - opentelemetry
+  - finops
+
+maintainers:
+  - name: Yasvanth Udayakumar
+    url: https://github.com/yasvanth511
+
+annotations:
+  # Surfaced by Artifact Hub if/when the chart is published there.
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: monitoring-logging

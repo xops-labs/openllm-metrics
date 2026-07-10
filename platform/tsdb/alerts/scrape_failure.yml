@@ -1,0 +1,74 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Alert rules: scrape health for all OpenLLM Metrics services.
+# Loaded by Prometheus via rule_files in prometheus.yml.
+
+groups:
+  - name: openllm_scrape_health
+    interval: 60s
+    rules:
+      # Any openllm_* scrape target has been unreachable for > 5 minutes.
+      - alert: OpenLLMScrapeFailed
+        expr: up{job=~"openllm_.*"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: 'Scrape failed: {{ $labels.job }} / {{ $labels.instance }}'
+          description: >-
+            Job {{ $labels.job }} on instance {{ $labels.instance }} has not
+            been reachable for more than 5 minutes. Check that the service is
+            running and that the /metrics path is accessible.
+          runbook: 'https://github.com/yasvanth511/openllm-metrics-oss/wiki/runbooks/scrape-failed'
+
+      # Prometheus itself cannot reach any targets in a job for > 10 minutes.
+      - alert: OpenLLMAllTargetsDown
+        expr: count(up{job=~"openllm_.*"} == 1) == 0
+        for: 10m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: 'All OpenLLM Metrics scrape targets are down'
+          description: >-
+            No openllm_* scrape target has been reachable for more than
+            10 minutes. The metrics pipeline is blind.
+
+  - name: openllm_tsdb_health
+    interval: 60s
+    rules:
+      # Prometheus TSDB is approaching storage capacity.
+      - alert: PrometheusTSDBStorageHigh
+        expr: >-
+          prometheus_tsdb_storage_blocks_bytes
+          / on() group_left()
+          prometheus_tsdb_storage_blocks_bytes offset 24h
+          > 1.5
+        for: 30m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: 'Prometheus TSDB storage grew > 50% in 24 h'
+          description: >-
+            TSDB block storage grew by more than 50 percent in the last 24 hours.
+            Review cardinality (see platform/tsdb/CARDINALITY_BUDGET.md) and
+            consider enabling a remote-write target.
+
+      # Scrape duration is trending high (possible overload).
+      - alert: PrometheusScrapeSlowdown
+        expr: >-
+          prometheus_target_interval_length_seconds{quantile="0.9"}
+          > 12
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: 'Prometheus scrape latency p90 > 12 s (interval is 15 s)'
+          description: >-
+            The 90th-percentile scrape duration has exceeded 12 seconds.
+            Targets may be overloaded or the cardinality budget is being
+            exceeded. See platform/tsdb/CARDINALITY_BUDGET.md.

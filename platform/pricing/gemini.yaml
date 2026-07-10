@@ -1,0 +1,29 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Google Gemini / Vertex AI public list prices (USD per 1,000 tokens).
+#
+# Source: https://ai.google.dev/pricing and https://cloud.google.com/vertex-ai/generative-ai/pricing
+# (snapshot late 2025). APPROXIMATE list prices; long-context tiers, batch,
+# and committed-use discounts not reflected. Update via PR.
+provider: google
+currency: USD
+unit: per_1k_tokens
+approximate: true
+effective_from: '2025-10-01T00:00:00Z'
+models:
+  - model: gemini-2.5-pro
+    input_per_1k: 0.00125
+    output_per_1k: 0.0100
+  - model: gemini-2.5-flash
+    input_per_1k: 0.000075
+    output_per_1k: 0.00030
+  - model: gemini-2.0-flash
+    input_per_1k: 0.000075
+    output_per_1k: 0.00030
+  - model: gemini-1.5-pro
+    input_per_1k: 0.00125
+    output_per_1k: 0.00500
+  - model: gemini-1.5-flash
+    input_per_1k: 0.000075
+    output_per_1k: 0.00030

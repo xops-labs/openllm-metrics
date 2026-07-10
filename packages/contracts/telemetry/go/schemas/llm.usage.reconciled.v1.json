@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.dev/contracts/telemetry/llm.usage.reconciled/v1",
+  "title": "LLMUsageReconciled",
+  "description": "F008 reconciled billing event derived from a FOCUS line item. Cost in integer USD minor units (1 unit = 0.01 USD). One event per (tenant, provider, model, period_start, period_end, billing_account_id) tuple.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "source_event_id",
+    "source",
+    "source_service",
+    "provider",
+    "model",
+    "tenant",
+    "team",
+    "env",
+    "billing_account_id",
+    "reconciled_cost_usd_minor_units",
+    "period_start",
+    "period_end",
+    "reconciled_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Globally unique event identifier."
+    },
+    "source_event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable handle for the originating FOCUS line item. Format: focus:<billing_account_id>:<period_start>:<period_end>:<service_name>."
+    },
+    "source": {
+      "type": "string",
+      "const": "exporter",
+      "description": "Always exporter for reconciled events (source is upstream llm-usage-exporter /focus.json)."
+    },
+    "source_service": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Producing service name, e.g. apps/worker/focus-ingester."
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["openai", "anthropic", "google", "azure_openai", "bedrock"]
+    },
+    "model": {
+      "type": "string",
+      "description": "Canonical model name. May be empty when the FOCUS line item is provider-level rather than model-level."
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "team": {
+      "type": "string",
+      "minLength": 1
+    },
+    "app": { "type": "string" },
+    "env": {
+      "type": "string",
+      "enum": ["development", "staging", "production"]
+    },
+    "project": { "type": "string" },
+    "region": { "type": "string" },
+    "billing_account_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "FOCUS BillingAccountId (the provider-side account). Opaque to the platform."
+    },
+    "invoice_id": {
+      "type": "string",
+      "description": "FOCUS InvoiceId when the line item is finalized."
+    },
+    "service_name": {
+      "type": "string",
+      "description": "FOCUS ServiceName (e.g. 'OpenAI API', 'Azure OpenAI'). Provider-supplied."
+    },
+    "charge_category": {
+      "type": "string",
+      "description": "FOCUS ChargeCategory (Usage, Tax, Adjustment, …)."
+    },
+    "reconciled_cost_usd_minor_units": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Billed cost in USD minor units (1 unit = 0.01 USD), summed across line items in the period."
+    },
+    "list_cost_usd_minor_units": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "List/pre-discount cost in USD minor units. Optional; reflects FOCUS ListCost when available."
+    },
+    "pricing_currency": {
+      "type": "string",
+      "description": "Three-letter pricing currency from the original FOCUS record (USD if amount is reconciled to USD)."
+    },
+    "period_start": {
+      "type": "string",
+      "format": "date-time",
+      "description": "FOCUS ChargePeriodStart (RFC3339)."
+    },
+    "period_end": {
+      "type": "string",
+      "format": "date-time",
+      "description": "FOCUS ChargePeriodEnd (RFC3339)."
+    },
+    "reconciled_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the ingester wrote the canonical record."
+    }
+  }
+}

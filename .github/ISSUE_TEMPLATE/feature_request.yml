@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a capability, improvement, or integration.
+title: 'feat: '
+labels: ['enhancement', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Note: the algorithms behind scoring (F024/F025), anomaly detection, policy evaluation (F030), routing (F034), and bounded fallback (F035) are **OSS-deferred** — PRs implementing them are not accepted here (see [CONTRIBUTING.md → Confidentiality Rules](https://github.com/yasvanth511/openllm-metrics-oss/blob/main/CONTRIBUTING.md#confidentiality-rules)). Everything else — adapters, exporters, dashboards, SDKs, console, docs — is fair game.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What operational problem does this solve? Who hits it (SRE, FinOps, platform, governance)?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should happen? If it touches the telemetry schema, note whether OTel GenAI semconv already covers the signal.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - gateway / capture plane
+        - pollers / billing reconciliation
+        - metrics schema / OTel semconv
+        - scoring & SLO (OSS surface)
+        - policy / audit / governance
+        - admin console (web)
+        - SDKs
+        - OTel Collector receiver
+        - dashboards / alerts
+        - deployment (compose / Helm / k8s)
+        - docs
+        - other
+    validations:
+      required: true

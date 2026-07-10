@@ -1,0 +1,28 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Grafana datasource provisioning — Prometheus (default).
+# Loaded automatically at Grafana startup from /etc/grafana/provisioning/datasources/.
+# To point at a different TSDB backend (VictoriaMetrics, Mimir) update the url
+# and prometheusType fields; all dashboards continue to use PromQL unchanged.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: openllm-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      prometheusType: Prometheus
+      prometheusVersion: '2.52.0'
+      # Align query step with scrape interval so Grafana auto-step
+      # does not select sub-scrape-interval resolutions.
+      minStep: 15s
+      # Disable Grafana's exemplar feature until exemplar emission is wired in F006.
+      exemplarTraceIdDestinations: []
+    secureJsonFields: {}

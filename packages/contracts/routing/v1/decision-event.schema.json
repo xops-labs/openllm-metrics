@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.dev/contracts/routing/decision-event/v1",
+  "title": "RoutingDecisionEvent",
+  "description": "F036 routing.decision.v1 — render-contract for routing decisions emitted by a registered routing.Decider implementation. The OSS distribution stores and renders these events verbatim. The OSS no-op decider (packages/extensions/go/routing) emits a single trivial reason step. Registered deciders may emit rich reason_chain and alternatives content; OSS treats those fields as opaque JSON. This schema deliberately specifies SHAPE only — it does NOT define scoring, weighting, ranking, or selection semantics. Those are intentionally not defined by this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "tenant_id",
+    "request",
+    "decision",
+    "reason_chain",
+    "decided_at",
+    "decider_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Globally unique decision identifier (UUIDv7 recommended). Idempotency key for ledger ingest."
+    },
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Tenant UUID. Every decision is owned by exactly one tenant."
+    },
+    "team": {
+      "type": "string",
+      "description": "Team label as carried on the originating request. Free-form; never enriched server-side."
+    },
+    "app": {
+      "type": "string",
+      "description": "App label as carried on the originating request."
+    },
+    "env": {
+      "type": "string",
+      "description": "Environment label (e.g. prod, staging). Free-form."
+    },
+    "project": {
+      "type": "string",
+      "description": "Project label as carried on the originating request."
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_requested", "model_requested"],
+      "description": "Minimal request snapshot. NEVER contains prompt text, completion text, request headers other than the request-id, or any caller payload.",
+      "properties": {
+        "provider_requested": {
+          "type": "string",
+          "description": "Provider the caller asked for (e.g. openai, anthropic, gemini, azure_openai, bedrock)."
+        },
+        "model_requested": {
+          "type": "string",
+          "description": "Model the caller asked for, as written by the caller."
+        },
+        "route": {
+          "type": "string",
+          "description": "Logical route the caller used (e.g. /v1/chat/completions). Free-form."
+        },
+        "request_id_hash": {
+          "type": "string",
+          "description": "SHA-256 hex of the inbound X-Request-ID header, or empty if the caller did not supply one. Never the raw header."
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_chosen", "model_chosen"],
+      "description": "The decider's output: which provider/model was selected. The selection logic itself is owned by the registered routing.Decider implementation and is not described here.",
+      "properties": {
+        "provider_chosen": {
+          "type": "string"
+        },
+        "model_chosen": {
+          "type": "string"
+        },
+        "route_chosen": {
+          "type": "string",
+          "description": "Resolved upstream route, if different from request.route. Free-form."
+        }
+      }
+    },
+    "reason_chain": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered list of factors the decider considered. The OSS layer stores this array verbatim and renders it as a tree. Field semantics are owned by the decider — OSS does NOT interpret factor names, values, thresholds, or weight_hint numbers. The OSS no-op decider emits a single step like {step:1, factor:\"noop\", value:\"identity\"}.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["step", "factor", "value"],
+        "properties": {
+          "step": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based position in the reason chain."
+          },
+          "factor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Decider-defined factor name. Treated as an opaque label by OSS."
+          },
+          "value": {
+            "description": "Decider-defined factor value. May be a string, number, boolean, array, or object. Treated as an opaque blob by OSS."
+          },
+          "threshold": {
+            "description": "Decider-defined threshold value. Treated as an opaque blob by OSS."
+          },
+          "weight_hint": {
+            "type": "number",
+            "description": "Decider-defined hint number. OSS stores and displays this number verbatim and does NOT interpret it as a weight, score, or coefficient."
+          }
+        }
+      }
+    },
+    "alternatives": {
+      "type": "array",
+      "description": "Provider/model candidates the decider considered but did not select. The OSS layer stores this array verbatim. rejected_because is a free-form tag, not an algorithm description.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "model"],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "score_hint": {
+            "type": "number",
+            "description": "Decider-defined hint number. OSS stores and displays this number verbatim and does NOT interpret it as a score or ranking position."
+          },
+          "rejected_because": {
+            "type": "string",
+            "description": "Decider-defined tag explaining why this candidate was not chosen. Treated as an opaque label by OSS."
+          }
+        }
+      }
+    },
+    "decided_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp the decider produced this decision."
+    },
+    "decider_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Version identifier of the registered decider that produced this decision. The OSS no-op decider reports \"oss-noop\"; registered deciders report their own version string. OSS does not parse or compare these strings."
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "W3C trace context trace-id, if available."
+    }
+  }
+}

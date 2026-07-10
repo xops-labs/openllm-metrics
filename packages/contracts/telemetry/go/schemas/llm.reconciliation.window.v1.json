@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.dev/contracts/telemetry/llm.reconciliation.window/v1",
+  "title": "LLMReconciliationWindow",
+  "description": "Window-close event emitted by apps/worker/reconciler when a (tenant, provider, model, window_start) bucket closes — carries the per-window estimated vs. reconciled cost and the trivial drift ratio. Drift math is intentionally trivial: drift_usd = reconciled_cost_usd - estimated_cost_usd; drift_ratio = drift_usd / max(estimated_cost_usd, epsilon). Decision logic on the drift (alerting threshold, routing action, budget enforcement) is outside this event contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "source_service",
+    "tenant",
+    "env",
+    "provider",
+    "model",
+    "window_start",
+    "window_end",
+    "estimated_cost_usd",
+    "reconciled_cost_usd",
+    "drift_usd",
+    "drift_ratio",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Deterministic identifier derived from the unique key of the reconciliation row plus its terminal status. Replaying a window close produces a byte-identical event (idempotent consumer guarantee)."
+    },
+    "source_service": {
+      "type": "string",
+      "const": "apps/worker/reconciler"
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "team": {
+      "type": "string"
+    },
+    "app": {
+      "type": "string"
+    },
+    "env": {
+      "type": "string",
+      "enum": ["development", "staging", "production"]
+    },
+    "project": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "window_start": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp of the window's start (truncated to the configured window size)."
+    },
+    "window_end": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp of the window's end."
+    },
+    "estimated_cost_usd": {
+      "type": "number",
+      "description": "Sum of runtime cost estimates contributed to this window (USD float; the reconciler stores integer minor units in Postgres and converts at the bus boundary)."
+    },
+    "reconciled_cost_usd": {
+      "type": "number",
+      "description": "Vendor-reconciled cost share allocated to this window from llm.usage.reconciled events covering the period."
+    },
+    "drift_usd": {
+      "type": "number",
+      "description": "reconciled_cost_usd - estimated_cost_usd. May be negative."
+    },
+    "drift_ratio": {
+      "type": "number",
+      "description": "drift_usd divided by max(reconciled_cost_usd, epsilon). Trivial arithmetic — no scoring, no weighting."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["reconciled", "unreconciled"],
+      "description": "Terminal status of the window. 'reconciled' means both sides contributed non-zero cost; 'unreconciled' means only one side did within the grace period."
+    }
+  }
+}

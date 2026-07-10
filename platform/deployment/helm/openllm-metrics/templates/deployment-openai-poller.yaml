@@ -1,0 +1,95 @@
+{{/*
+Copyright 2026 Yasvanth Udayakumar
+Licensed under the Apache License, Version 2.0.
+*/}}
+{{- if .Values.openaiPoller.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openllm-metrics.fullname" . }}-openai-poller
+  labels:
+    {{- include "openllm-metrics.labels" . | nindent 4 }}
+    app.kubernetes.io/component: openai-poller
+    app.kubernetes.io/name: openai-poller
+spec:
+  replicas: {{ .Values.openaiPoller.replicaCount }}
+  # The poller is stateful in the sense that it tracks the last-seen window
+  # per-process; running a single replica per tenant is the supported topology.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "openllm-metrics.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: openai-poller
+  template:
+    metadata:
+      labels:
+        {{- include "openllm-metrics.labels" . | nindent 8 }}
+        app.kubernetes.io/component: openai-poller
+        app.kubernetes.io/name: openai-poller
+      {{- with .Values.openaiPoller.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "openllm-metrics.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: openai-poller
+          image: {{ include "openllm-metrics.image" (dict "ctx" $ "svc" .Values.openaiPoller) | quote }}
+          imagePullPolicy: {{ include "openllm-metrics.pullPolicy" (dict "ctx" $ "svc" .Values.openaiPoller) }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          args:
+            - --config
+            - /etc/openllm-poller/openai.yaml
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # The poller reads the API key out of the env var NAMED in its
+            # config (api_key_env). We project it from the secret here.
+            - name: {{ .Values.secrets.openaiAdminApiKey.secretKey | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.openaiAdminApiKey.secretName | quote }}
+                  key: {{ .Values.secrets.openaiAdminApiKey.secretKey | quote }}
+          livenessProbe:
+            {{- toYaml .Values.openaiPoller.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.openaiPoller.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.openaiPoller.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/openllm-poller
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "openllm-metrics.fullname" . }}-openai-poller
+        # readOnlyRootFilesystem=true requires a writable /tmp for the Go
+        # runtime's transient files.
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.openaiPoller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.openaiPoller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.openaiPoller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

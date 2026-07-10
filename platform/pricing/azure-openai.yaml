@@ -1,0 +1,30 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Azure OpenAI Service public list prices (USD per 1,000 tokens).
+#
+# Source: https://azure.microsoft.com/en-us/pricing/details/cognitive-services/openai-service/
+# (snapshot late 2025). APPROXIMATE; Azure pricing is region-, deployment-, and
+# commitment-tier dependent. PTU / reserved capacity discounts NOT reflected.
+# Update via PR.
+provider: azure_openai
+currency: USD
+unit: per_1k_tokens
+approximate: true
+effective_from: '2025-10-01T00:00:00Z'
+models:
+  - model: gpt-4o
+    input_per_1k: 0.0025
+    output_per_1k: 0.0100
+  - model: gpt-4o-mini
+    input_per_1k: 0.00015
+    output_per_1k: 0.00060
+  - model: gpt-4.1
+    input_per_1k: 0.0020
+    output_per_1k: 0.0080
+  - model: gpt-4-turbo
+    input_per_1k: 0.0100
+    output_per_1k: 0.0300
+  - model: gpt-35-turbo
+    input_per_1k: 0.00050
+    output_per_1k: 0.00150

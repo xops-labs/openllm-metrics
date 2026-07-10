@@ -1,0 +1,75 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# promtool test rules fixture for LLMCostSpike.
+#
+# Models 7 days of baseline (0.06 USD/minute, ~0.001 USD/sec) then a 90
+# minute spike at 0.6 USD/minute (~0.01 USD/sec, 10x the baseline). The
+# alert is evaluated after the spike fully fills the rule's 1h rate
+# window, so the printed ratio in the description matches 10x.
+#
+# Run:
+#   docker run --rm --entrypoint promtool \
+#     -v "$PWD:/work" prom/prometheus:v2.52.0 \
+#     test rules /work/tests/dashboards/cost-spike-fixture.yml
+
+rule_files:
+  - ../../packages/dashboards/prometheus-alerts/llm-cost-spike.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: cost_spike_fires_when_3x_baseline_for_15m
+    input_series:
+      # Baseline: cost increases by 0.06 USD per minute for 7 days
+      # (10080 samples). Then the rate jumps to 0.6 USD/min (10x) for
+      # 90 minutes so the rule's 60m numerator window can fully fill
+      # with spike values before we assert on the printed multiplier.
+      - series: 'llm_cost_usd_total{provider="openai",model="gpt-4o-mini",tenant="acme",env="prod",team="ai-platform"}'
+        values: '0+0.06x10080 604.86+0.6x90'
+    alert_rule_test:
+      # 5 minutes after the spike: not yet eligible (warning `for: 15m`
+      # not satisfied, critical `for: 10m` not satisfied).
+      - eval_time: 10085m
+        alertname: LLMCostSpike
+        exp_alerts: []
+
+      # 80 minutes after the spike: numerator window fully filled with
+      # spike values, ratio resolves to exactly 10. Both warning and
+      # critical alerts are firing.
+      - eval_time: 10160m
+        alertname: LLMCostSpike
+        exp_alerts:
+          - exp_labels:
+              alertname: LLMCostSpike
+              severity: warning
+              tenant: acme
+              team: ai-platform
+              provider: openai
+              component: finops
+            exp_annotations:
+              summary: 'LLM cost rate is 2x the 7d baseline for acme/ai-platform/openai'
+              runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-cost-spike.md'
+              description: |
+                Current 1h spend rate for tenant=acme,
+                team=ai-platform, provider=openai is
+                10.00x the 7-day baseline. Investigate whether
+                a new model, looped retry, or noisy app is driving the spike before
+                it consumes the team's monthly budget.
+          - exp_labels:
+              alertname: LLMCostSpike
+              severity: critical
+              tenant: acme
+              team: ai-platform
+              provider: openai
+              component: finops
+            exp_annotations:
+              summary: 'CRITICAL LLM cost rate is 3x+ the 7d baseline for acme/ai-platform/openai'
+              runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-cost-spike.md'
+              description: |
+                Current 1h spend rate for tenant=acme,
+                team=ai-platform, provider=openai is
+                10.00x the 7-day baseline. Page on-call.
+                Consider blocking expensive models or enabling fallback while
+                triaging.

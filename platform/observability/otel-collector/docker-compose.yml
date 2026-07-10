@@ -1,0 +1,24 @@
+# Local-dev OTel Collector stack. Brings up a single Collector configured
+# from dev.yaml. Pair with platform/tsdb/docker-compose.yml so Prometheus
+# scrapes the Collector's metrics endpoint.
+#
+# Usage:
+#   docker compose -f platform/observability/otel-collector/docker-compose.yml up -d
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    container_name: openllm_otel_collector
+    command: ['--config=/etc/otelcol/config.yaml']
+    volumes:
+      - ./dev.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - '4317:4317' # OTLP gRPC
+      - '4318:4318' # OTLP HTTP
+      - '8889:8889' # Prometheus scrape exporter
+      - '13133:13133' # health check
+    restart: unless-stopped
+
+networks:
+  default:
+    name: openllm_observability

@@ -1,0 +1,157 @@
+# OpenLLM Metrics — streaming bus topic definitions.
+#
+# Each topic's canonical schema lives under packages/contracts/ (Phase 1 — F008
+# put the telemetry-shaped schemas under packages/contracts/telemetry/go/schemas/;
+# Phase G governance/audit schemas live under packages/contracts/audit/,
+# packages/contracts/routing/, and packages/contracts/notifications/).
+#
+# Dead-letter topics are auto-named <topic>.dlq. Retention defaults can be
+# overridden per deployment environment.
+#
+# Producer/consumer fields reference the in-repo service path; "TBD" means no
+# OSS service currently fills that side and the wiring lives in a future feature
+# or this repository. The schema reference is the canonical authority for
+# the on-the-wire payload shape; do NOT include routing algorithm internals,
+# reliability scoring formula weights, governance decision logic, or fallback
+# selection logic in these files. Field NAMES that carry decision outputs
+# (e.g. `decision`, `risk_score`, `selected_provider`) are OK; the ALGORITHMS
+# that produced them are outside the scope of these topic definitions.
+
+topics:
+  # ---------------------------------------------------------------------------
+  # Telemetry topics (F008): normalized usage and runtime events.
+  # ---------------------------------------------------------------------------
+
+  # Normalized usage events (cross-provider canonical form, F008 §2)
+  - name: llm.usage.normalized
+    description: Provider-normalized usage events with canonical cross-provider label set.
+    partitions: 8
+    replication: 1 # override to 3 in production
+    retention_hours: 168 # 7 days
+    schema: packages/contracts/telemetry/go/schemas/llm.usage.normalized.v1.json
+    producers:
+      - apps/worker/usage-poller/openai
+    consumers:
+      - apps/api/metrics-endpoint
+      - apps/worker/quota-risk
+
+  # Runtime telemetry from the proxy gateway / SDK (F008 §3)
+  - name: llm.runtime.normalized
+    description: Runtime request/response telemetry from the gateway or SDKs (no payloads).
+    partitions: 16
+    replication: 1
+    retention_hours: 168
+    schema: packages/contracts/telemetry/go/schemas/llm.runtime.normalized.v1.json
+    producers:
+      - apps/gateway
+    consumers:
+      - apps/api/metrics-endpoint
+      - apps/worker/cost-mapper
+      - apps/worker/quota-risk
+
+  # ---------------------------------------------------------------------------
+  # Cost / reconciliation topics (Phase B/D — F023, FOCUS reconciliation).
+  # ---------------------------------------------------------------------------
+
+  # FOCUS-derived vendor-reconciled billing events (F008 §4, F023)
+  - name: llm.usage.reconciled
+    description: Vendor-reconciled billing events derived from the upstream llm-usage-exporter /focus.json endpoint. One event per (tenant, provider, model, period_start, period_end, billing_account_id) tuple.
+    partitions: 8
+    replication: 1
+    retention_hours: 720 # 30 days — billing records have longer relevance than runtime
+    schema: packages/contracts/telemetry/go/schemas/llm.usage.reconciled.v1.json
+    producers:
+      - apps/worker/focus-ingester
+    consumers:
+      - apps/worker/reconciler
+      - apps/worker/cost-mapper
+
+  # Runtime-side cost estimates produced by the cost-mapper (F023)
+  - name: llm.cost.estimated
+    description: Token-priced runtime cost estimates produced by joining llm.runtime.normalized events against the per-provider pricing catalog. Pure-function "tokens × rate" output; no scoring or routing semantics.
+    partitions: 8
+    replication: 1
+    retention_hours: 168 # 7 days
+    schema: packages/contracts/telemetry/go/schemas/llm.cost.estimated.v1.json
+    producers:
+      - apps/worker/cost-mapper
+    consumers:
+      - apps/worker/reconciler
+
+  # Reconciliation window-close events (F023)
+  - name: llm.reconciliation.window
+    description: Drift signal emitted when a reconciliation window closes — carries the per-window estimated vs. reconciled cost and the trivial drift ratio. Decision logic on the drift (alerting threshold, routing action, budget enforcement) is outside this event.
+    partitions: 4
+    replication: 1
+    retention_hours: 720 # 30 days
+    schema: packages/contracts/telemetry/go/schemas/llm.reconciliation.window.v1.json
+    producers:
+      - apps/worker/reconciler
+    consumers:
+      # F033 alert-bridge that translates drift_ratio breaches into alert.event.v1
+      # is not in OSS yet; dashboards (F027) read the matching Postgres table.
+      - TBD
+
+  # ---------------------------------------------------------------------------
+  # Quota-risk signal topic (Phase G — F026).
+  # ---------------------------------------------------------------------------
+
+  # Provider quota / rate-limit risk snapshots (F026)
+  - name: llm.quota.risk.v1
+    description: Per-(tenant, provider, model, region, kind) rolling snapshot of provider rate-limit headers — used_ratio, seconds_to_reset, and a transparent linear risk_score. Signal-only; carries no enforcement, routing, or throttling decision.
+    partitions: 4
+    replication: 1
+    retention_hours: 72 # 3 days — signal is short-lived
+    schema: packages/contracts/telemetry/go/schemas/llm.quota.risk.v1.json
+    producers:
+      - apps/worker/quota-risk
+    consumers:
+      # OSS dashboards read directly from the Prometheus gauges; no in-repo
+      # bus consumer exists yet.
+      - TBD
+
+  # ---------------------------------------------------------------------------
+  # Governance topics (Phase G — F029, F031, F033, F036).
+  # ---------------------------------------------------------------------------
+
+  # Audit events for policy / config mutations (F031)
+  - name: audit.event.v1
+    description: Append-only audit ledger envelope. Every OSS service that mutates governance state (policy, notification rules, label mappings, console actions) publishes here; the audit-service hash-chains the events into the append-only ledger. Payloads MUST NOT contain prompts, completions, passwords, API keys, OAuth tokens, or bearer tokens — the audit-service runs a defense-in-depth redact step on insert.
+    partitions: 4
+    replication: 1
+    retention_hours: 8760 # 1 year — audit records are long-lived for compliance
+    schema: packages/contracts/audit/v1/audit-event.schema.json
+    producers:
+      - apps/api/policy-service
+      - apps/worker/notifier
+    consumers:
+      - apps/api/audit-service
+
+  # Alert events consumed by the notifier (F033)
+  - name: alert.event.v1
+    description: Canonical alert envelope consumed by the F033 notifier worker. Producers fan in from the Alertmanager webhook bridge (Phase 1 alerts, F012/F027) and the future F030 policy-evaluator worker. Description fields MUST NOT contain LLM prompt or completion content.
+    partitions: 4
+    replication: 1
+    retention_hours: 168 # 7 days
+    schema: packages/contracts/notifications/v1/alert-event.schema.json
+    producers:
+      # The Alertmanager bridge and the F030 evaluator worker are not in
+      # OSS yet. Producers will land alongside those features.
+      - TBD
+    consumers:
+      - apps/worker/notifier
+
+  # Routing decision events for the decision ledger (F036)
+  - name: routing.decision.v1
+    description: Render-contract for routing decisions emitted by a registered routing.Decider implementation. The OSS distribution stores and renders these events verbatim. SHAPE only — does NOT define scoring, weighting, ranking, or selection semantics. Reason-chain and alternatives content is opaque JSON owned by the decider.
+    partitions: 8
+    replication: 1
+    retention_hours: 2160 # 90 days — F036 default retention
+    schema: packages/contracts/routing/v1/decision-event.schema.json
+    producers:
+      # The OSS Noop decider in packages/extensions/go/routing is synchronous
+      # (it does not publish to the bus). Registered F034 / F035 deciders are
+      # the canonical producers.
+      - TBD
+    consumers:
+      - apps/api/decision-service

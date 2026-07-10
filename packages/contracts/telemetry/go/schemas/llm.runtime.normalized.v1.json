@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.dev/contracts/telemetry/llm.runtime.normalized/v1",
+  "title": "LLMRuntimeNormalized",
+  "description": "F008 canonical runtime telemetry event from the gateway/SDK. Latency in microseconds. LLM payload fields are forbidden.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "source_mode",
+    "source_service",
+    "request_id_hash",
+    "provider",
+    "model",
+    "operation",
+    "tenant",
+    "team",
+    "env",
+    "status",
+    "latency_us",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Globally unique event identifier (UUIDv7 recommended). Idempotency key."
+    },
+    "source_mode": {
+      "type": "string",
+      "enum": ["pull", "proxy"],
+      "description": "Runtime events are always source_mode=proxy."
+    },
+    "source_service": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Producing service name, e.g. apps/api/gateway."
+    },
+    "request_id_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of the request ID. Raw request IDs are forbidden."
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["openai", "anthropic", "google", "azure_openai", "bedrock"]
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["chat", "completion", "embedding", "image", "audio", "moderation", "other"]
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "team": {
+      "type": "string",
+      "minLength": 1
+    },
+    "app": {
+      "type": "string"
+    },
+    "env": {
+      "type": "string",
+      "enum": ["development", "staging", "production"]
+    },
+    "project": {
+      "type": "string"
+    },
+    "region": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "timeout", "rate_limited", "circuit_open"]
+    },
+    "status_code": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599,
+      "description": "HTTP status code returned by the provider."
+    },
+    "error_type": {
+      "type": "string",
+      "description": "Normalized error category; absent on success."
+    },
+    "latency_us": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "End-to-end latency in microseconds. F008 §10."
+    },
+    "ttfb_us": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Time to first byte (streaming) in microseconds."
+    },
+    "input_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "output_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "total_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "is_streaming": {
+      "type": "boolean"
+    },
+    "routing_reason": {
+      "type": "string",
+      "description": "Optional routing label."
+    },
+    "policy_name": {
+      "type": "string",
+      "description": "Optional policy label."
+    },
+    "fallback_reason": {
+      "type": "string",
+      "description": "Optional fallback label."
+    },
+    "from_model": {
+      "type": "string",
+      "description": "Original target model before routing/fallback."
+    },
+    "to_model": {
+      "type": "string",
+      "description": "Effective model after routing/fallback."
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "span_id": {
+      "type": "string"
+    }
+  }
+}

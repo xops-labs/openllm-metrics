@@ -1,0 +1,39 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Label-translator config — wired for the quickstart compose.
+#
+# Pre-conditions for end-to-end operation:
+#   - Postgres has the control_plane.label_mappings table populated.
+#     Run the control_plane migrations (platform/db/control_plane/migrations)
+#     before bringing this service up.
+#   - An upstream `llm-usage-exporter` (https://github.com/xops-labs/llm-usage-exporter)
+#     is reachable at exporter.url. The quickstart does not ship one; point
+#     this at your existing exporter or leave the placeholder and observe the
+#     `llm_label_translator_scrape_failure_total` counter increase until you
+#     wire one up.
+#
+# DSN is read from the env var named by database.dsn_env
+# (`OPENLLM_CONTROL_PLANE_DSN`) — never log it.
+
+server:
+  port: 8081
+
+exporter:
+  url: http://llm-usage-exporter:9090/metrics
+  scrape_interval_seconds: 60
+  scrape_timeout_seconds: 15
+
+database:
+  dsn_env: OPENLLM_CONTROL_PLANE_DSN
+  mapping_cache_ttl_seconds: 300
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-label-translator-quickstart
+
+defaults:
+  tenant: quickstart-tenant
+  team: quickstart
+  env: development

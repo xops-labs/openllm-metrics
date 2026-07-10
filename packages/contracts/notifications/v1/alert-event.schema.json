@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.org/schemas/notifications/v1/alert-event.schema.json",
+  "title": "OpenLLM Metrics Alert Event v1",
+  "description": "F033 canonical alert event consumed by the notifier worker. Producers include the Alertmanager webhook receiver (Phase 1 alerts: F012/F027) and the future F030 policy-evaluator worker. The notifier matches against (tenant_id, severity, source), fans out to configured channels, and records each attempt in notification_deliveries.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "tenant_id", "severity", "source", "summary", "started_at"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Globally unique alert event identifier. Acts as the idempotency key for notification_deliveries (UNIQUE on (alert_event_id, channel_id))."
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant UUID (string form). Every alert belongs to exactly one tenant; cross-tenant fan-out is not permitted."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low", "info"],
+      "description": "Severity bucket. Routing rules match against this enum."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Producer-supplied source tag. Examples: 'alertmanager', 'slo', 'quota', 'anomaly', 'policy', 'drift'. Routing rules can match an allowlist of sources."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Short human-readable summary suitable for the subject line of an email or the title of a webhook payload."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Long-form description. Must not contain LLM prompt or completion content (F033 README §11)."
+    },
+    "labels": {
+      "type": "object",
+      "description": "Opaque k/v labels (team, app, env, provider, model, route, etc.). Values are forwarded verbatim into both webhook payloads and email bodies. Producers MUST NOT place secrets here.",
+      "additionalProperties": { "type": "string", "maxLength": 500 }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp at which the underlying condition started firing."
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp at which the condition resolved. Optional; omitted while the alert is firing."
+    },
+    "resource": {
+      "type": "string",
+      "description": "Optional resource identifier the alert refers to (e.g. 'provider=openai,model=gpt-4o,team=platform-search')."
+    },
+    "runbook_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Optional URL to a remediation runbook. Included verbatim in delivered payloads."
+    }
+  }
+}

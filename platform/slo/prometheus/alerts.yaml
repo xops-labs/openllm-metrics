@@ -1,0 +1,482 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Multi-window multi-burn-rate SLO alerts.
+#
+# Implements the four-pair burn-rate ladder from the Google SRE Workbook
+# (Chapter 5, "Alerting on SLOs"). For each objective and severity tier the
+# alert requires two windows to be hot at once -- a short window for
+# responsiveness and a long window to suppress flaps.
+#
+# Severity ladder (per objective):
+#   page  fast      burn_rate >= 14.4 over 1h  AND 5m   -- 2% of 30d budget burned in 1h.
+#   page  slow      burn_rate >=  6.0 over 6h  AND 30m  -- 5% of 30d budget burned in 6h.
+#   ticket slow     burn_rate >=  3.0 over 1d  AND 2h   -- 10% of 30d budget burned in 1d.
+#   ticket slow     burn_rate >=  1.0 over 3d  AND 6h   -- 10% of 30d budget burned in 3d.
+#
+# Burn rate is defined as (error_ratio / (1 - target)). Each severity threshold
+# is a constant inlined per objective because Prometheus does not allow
+# parameter substitution from recording rule labels. Operators with non-default
+# targets should clone the relevant alert group and adjust the constants.
+#
+# Sub-window error ratios are sourced from
+# platform/slo/prometheus/recording-rules.yaml. The short-window expression is
+# evaluated inline to keep alert evaluation responsive within one scrape
+# interval of the breach actually starting.
+
+groups:
+  # =========================================================================
+  # Latency p99 SLO alerts -- assumes 0.99 target (1% error budget).
+  # Each threshold is (multiplier * 0.01).
+  # =========================================================================
+  - name: openllm_slo_latency_alerts
+    interval: 30s
+    rules:
+      - alert: LLMSLOLatencyP99FastBurn
+        expr: |-
+          (
+            sli:latency_p99:error_ratio:1h > 0.144
+          )
+          and
+          (
+            1 - (
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_latency_seconds_bucket{le="5"}[5m])
+              )
+              /
+              clamp_min(
+                sum by (tenant, team, app, provider, model) (
+                  rate(llm_gateway_latency_seconds_count[5m])
+                ),
+                1
+              )
+            ) > 0.144
+          )
+        for: 2m
+        labels:
+          severity: critical
+          slo: latency_p99
+          burn_window: 1h
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Latency p99 SLO fast burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            The p99 latency error budget is burning at >=14.4x normal rate over
+            the last 1h (corroborated by the last 5m). At this rate the entire
+            30-day budget is exhausted in roughly 2 days. Page on-call.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+      - alert: LLMSLOLatencyP99SlowBurn
+        expr: |-
+          (
+            sli:latency_p99:error_ratio:6h > 0.06
+          )
+          and
+          (
+            1 - (
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_latency_seconds_bucket{le="5"}[30m])
+              )
+              /
+              clamp_min(
+                sum by (tenant, team, app, provider, model) (
+                  rate(llm_gateway_latency_seconds_count[30m])
+                ),
+                1
+              )
+            ) > 0.06
+          )
+        for: 15m
+        labels:
+          severity: critical
+          slo: latency_p99
+          burn_window: 6h
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Latency p99 SLO slow burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            The p99 latency error budget is burning at >=6x normal rate over the
+            last 6h (corroborated by the last 30m). Page on-call -- 5% of the
+            30-day budget already gone.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+      - alert: LLMSLOLatencyP99TicketBurn1d
+        expr: |-
+          (
+            sli:latency_p99:error_ratio:1d > 0.03
+          )
+          and
+          (
+            1 - (
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_latency_seconds_bucket{le="5"}[2h])
+              )
+              /
+              clamp_min(
+                sum by (tenant, team, app, provider, model) (
+                  rate(llm_gateway_latency_seconds_count[2h])
+                ),
+                1
+              )
+            ) > 0.03
+          )
+        for: 1h
+        labels:
+          severity: warning
+          slo: latency_p99
+          burn_window: 1d
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Latency p99 SLO 1d burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            The p99 latency error budget is burning at >=3x normal rate over the
+            last 1d. Open a ticket; investigate within the working day.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+      - alert: LLMSLOLatencyP99TicketBurn3d
+        expr: |-
+          (
+            sli:latency_p99:error_ratio:3d > 0.01
+          )
+          and
+          (
+            1 - (
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_latency_seconds_bucket{le="5"}[6h])
+              )
+              /
+              clamp_min(
+                sum by (tenant, team, app, provider, model) (
+                  rate(llm_gateway_latency_seconds_count[6h])
+                ),
+                1
+              )
+            ) > 0.01
+          )
+        for: 3h
+        labels:
+          severity: warning
+          slo: latency_p99
+          burn_window: 3d
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Latency p99 SLO 3d burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            The p99 latency error budget is burning at >=1x normal rate over the
+            last 3d. Plan capacity / vendor-side investigation this sprint.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+  # =========================================================================
+  # Availability SLO alerts -- assumes 0.995 target (0.5% error budget).
+  # Each threshold is (multiplier * 0.005).
+  # =========================================================================
+  - name: openllm_slo_availability_alerts
+    interval: 30s
+    rules:
+      - alert: LLMSLOAvailabilityFastBurn
+        expr: |-
+          (
+            sli:availability:error_ratio:1h > 0.072
+          )
+          and
+          (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_requests_total{status_code!~"2.."}[5m])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_requests_total[5m])
+              ),
+              1
+            ) > 0.072
+          )
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+          burn_window: 1h
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Availability SLO fast burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            Gateway availability error budget burning at >=14.4x normal rate
+            over the last 1h (corroborated by the last 5m). Page on-call --
+            roughly 2% of the 30-day budget gone in an hour.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+      - alert: LLMSLOAvailabilitySlowBurn
+        expr: |-
+          (
+            sli:availability:error_ratio:6h > 0.03
+          )
+          and
+          (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_requests_total{status_code!~"2.."}[30m])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_requests_total[30m])
+              ),
+              1
+            ) > 0.03
+          )
+        for: 15m
+        labels:
+          severity: critical
+          slo: availability
+          burn_window: 6h
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Availability SLO slow burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            Gateway availability error budget burning at >=6x normal rate over
+            the last 6h (corroborated by the last 30m). Page on-call.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+      - alert: LLMSLOAvailabilityTicketBurn1d
+        expr: |-
+          (
+            sli:availability:error_ratio:1d > 0.015
+          )
+          and
+          (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_requests_total{status_code!~"2.."}[2h])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_requests_total[2h])
+              ),
+              1
+            ) > 0.015
+          )
+        for: 1h
+        labels:
+          severity: warning
+          slo: availability
+          burn_window: 1d
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Availability SLO 1d burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            Gateway availability error budget burning at >=3x normal rate over
+            the last 1d. Open a ticket; review provider status and retry/route
+            policies.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+      - alert: LLMSLOAvailabilityTicketBurn3d
+        expr: |-
+          (
+            sli:availability:error_ratio:3d > 0.005
+          )
+          and
+          (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_requests_total{status_code!~"2.."}[6h])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_requests_total[6h])
+              ),
+              1
+            ) > 0.005
+          )
+        for: 3h
+        labels:
+          severity: warning
+          slo: availability
+          burn_window: 3d
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Availability SLO 3d burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            Gateway availability error budget burning at >=1x normal rate over
+            the last 3d. Plan structural fixes this sprint -- the SLO will
+            breach this month if the burn continues.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+  # =========================================================================
+  # Cost-per-call SLO alerts -- assumes 0.95 target (5% error budget).
+  # Each threshold is (multiplier * 0.05). The recorded series is already a
+  # 0/1 indicator from recording-rules.yaml, so the burn-rate translates
+  # directly to the same fraction-of-time threshold.
+  # =========================================================================
+  - name: openllm_slo_cost_alerts
+    interval: 60s
+    rules:
+      - alert: LLMSLOCostPerCallFastBurn
+        expr: |-
+          (
+            sli:cost_per_call:error_ratio:1h > 0.72
+          )
+          and
+          (
+            (
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_estimated_cost_usd[5m])
+              )
+              /
+              clamp_min(
+                sum by (tenant, team, app, provider, model) (
+                  rate(llm_gateway_requests_total[5m])
+                ),
+                1
+              )
+            ) > bool 0.02 == 1
+          )
+        for: 5m
+        labels:
+          severity: critical
+          slo: cost_per_call
+          burn_window: 1h
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Cost-per-call SLO fast burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            Average cost per LLM call is over $0.02 for >=14.4x the allowed
+            fraction of the last 1h window. Page on-call -- 2% of the 30-day
+            cost budget gone in an hour.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+      - alert: LLMSLOCostPerCallSlowBurn
+        expr: |-
+          (
+            sli:cost_per_call:error_ratio:6h > 0.3
+          )
+          and
+          (
+            (
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_estimated_cost_usd[30m])
+              )
+              /
+              clamp_min(
+                sum by (tenant, team, app, provider, model) (
+                  rate(llm_gateway_requests_total[30m])
+                ),
+                1
+              )
+            ) > bool 0.02 == 1
+          )
+        for: 30m
+        labels:
+          severity: critical
+          slo: cost_per_call
+          burn_window: 6h
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Cost-per-call SLO slow burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            Average cost per LLM call is over $0.02 for >=6x the allowed
+            fraction of the last 6h window. Page on-call -- check for
+            prompt-bloat, model escalation, or accidental long-context calls.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+      - alert: LLMSLOCostPerCallTicketBurn1d
+        expr: |-
+          (
+            sli:cost_per_call:error_ratio:1d > 0.15
+          )
+          and
+          (
+            (
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_estimated_cost_usd[2h])
+              )
+              /
+              clamp_min(
+                sum by (tenant, team, app, provider, model) (
+                  rate(llm_gateway_requests_total[2h])
+                ),
+                1
+              )
+            ) > bool 0.02 == 1
+          )
+        for: 1h
+        labels:
+          severity: warning
+          slo: cost_per_call
+          burn_window: 1d
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Cost-per-call SLO 1d burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            Average cost per call is over $0.02 for >=3x the allowed fraction
+            of the last 1d. Open a ticket; FinOps should review prompt and
+            model choices this week.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'
+
+      - alert: LLMSLOCostPerCallTicketBurn3d
+        expr: |-
+          (
+            sli:cost_per_call:error_ratio:3d > 0.05
+          )
+          and
+          (
+            (
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_estimated_cost_usd[6h])
+              )
+              /
+              clamp_min(
+                sum by (tenant, team, app, provider, model) (
+                  rate(llm_gateway_requests_total[6h])
+                ),
+                1
+              )
+            ) > bool 0.02 == 1
+          )
+        for: 3h
+        labels:
+          severity: warning
+          slo: cost_per_call
+          burn_window: 3d
+          component: slo
+          tenant: '{{ $labels.tenant }}'
+          team: '{{ $labels.team }}'
+          app: '{{ $labels.app }}'
+        annotations:
+          summary: 'Cost-per-call SLO 3d burn for {{ $labels.tenant }}/{{ $labels.team }}/{{ $labels.app }}'
+          description: |
+            Average cost per call is over $0.02 for >=1x the allowed fraction
+            of the last 3d. Plan a prompt-engineering or model-tier review
+            this sprint.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/docs/product/slo-framework.md#burn-rate-alerts'

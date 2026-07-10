@@ -1,0 +1,438 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+openapi: 3.1.0
+info:
+  title: OpenLLM Metrics - decision-service
+  version: '0.1.0'
+  description: |
+    Read API for the routing decision ledger. Consumes routing.decision.v1
+    events from the streaming bus and stores them in Postgres. Exposes a
+    paginated list, single-record fetch, and an aggregate stats endpoint for
+    the admin console overview page.
+
+    The service does NOT evaluate or replay routing decisions — it is a pure
+    read layer. The OSS handler treats `reason_chain` and `alternatives` as
+    opaque JSON blobs emitted by the registered decider; it does not
+    interpret factor names, weight hints, or score hints.
+
+    Tenancy is expressed via the `?tenant=` query parameter on every
+    endpoint. In production an upstream auth proxy validates the caller's
+    JWT against the requested tenant; the decision-service does not enforce
+    JWT/OIDC itself (consistent with other Phase G OSS services).
+
+    Cursor pagination (decisions list): results are returned newest first
+    (DESC by id). The `next` field is the smallest id on the current page;
+    pass it as `?cursor=` to fetch the next older page.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: http://localhost:8094
+    description: Local development (default port)
+paths:
+  /v1/decisions:
+    get:
+      summary: Paginated list of routing decisions (newest first).
+      operationId: listDecisions
+      parameters:
+        - $ref: '#/components/parameters/TenantQuery'
+        - name: app
+          in: query
+          required: false
+          description: Filter by app label (exact match).
+          schema:
+            type: string
+            example: my-chatbot
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound on decided_at (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+            example: '2026-01-01T00:00:00Z'
+        - name: to
+          in: query
+          required: false
+          description: Inclusive upper bound on decided_at (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+            example: '2026-12-31T23:59:59Z'
+        - name: cursor
+          in: query
+          required: false
+          description: |
+            Integer row ID cursor from the previous page's `next` field.
+            Pass it to fetch the next older page.
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          required: false
+          description: |
+            Number of rows to return. Capped at max_page_size (default 500).
+            Defaults to default_page_size (default 50).
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+      responses:
+        '200':
+          description: Page of routing decisions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/decisions/stats:
+    get:
+      summary: Aggregate decision counts by chosen provider + model.
+      description: |
+        Returns the total decision count and a breakdown by
+        (provider_chosen, model_chosen) pair for the requested tenant and
+        optional time window. The OSS layer does not aggregate error rates
+        or override counts from inside reason_chain — operators render those
+        from the stored payload in the admin console.
+      operationId: getDecisionStats
+      parameters:
+        - $ref: '#/components/parameters/TenantQuery'
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound on decided_at (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Inclusive upper bound on decided_at (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Decision count statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionStats'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/decisions/{decision_id}:
+    get:
+      summary: Get a single routing decision by its decision_id.
+      description: |
+        decision_id is the opaque string identifier emitted by the decider
+        (not the integer row id). It is unique within a tenant.
+      operationId: getDecision
+      parameters:
+        - $ref: '#/components/parameters/TenantQuery'
+        - name: decision_id
+          in: path
+          required: true
+          description: Opaque decision identifier emitted by the decider.
+          schema:
+            type: string
+            example: dec_01j8xkyz0000000000000001
+      responses:
+        '200':
+          description: Single routing decision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Decision'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /metrics:
+    get:
+      summary: Prometheus self-metrics scrape endpoint.
+      description: |
+        Returns the Prometheus text exposition of this service's own
+        operational counters (queries, stats calls, consumer lag, etc.).
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /healthz:
+    get:
+      summary: Liveness probe.
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      summary: Readiness probe.
+      description: |
+        Returns 200 once the bus consumer has caught up to bus head. Returns
+        503 while warming up.
+      operationId: getReadyz
+      responses:
+        '200':
+          description: Service is ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                ready: true
+        '503':
+          description: Service is warming up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                ready: false
+                reason: warming
+
+components:
+  parameters:
+    TenantQuery:
+      name: tenant
+      in: query
+      required: true
+      description: |
+        Tenant identifier. All queries are scoped to this tenant. The value
+        is an opaque string (typically a UUID) passed through to the store.
+      schema:
+        type: string
+        example: 018e4c7a-1b2d-7000-8000-000000000001
+
+  schemas:
+    Decision:
+      type: object
+      description: A single routing decision record.
+      required:
+        - id
+        - decision_id
+        - tenant_id
+        - team
+        - app
+        - env
+        - project
+        - provider_requested
+        - model_requested
+        - route_requested
+        - request_id_hash
+        - provider_chosen
+        - model_chosen
+        - route_chosen
+        - reason_chain
+        - alternatives
+        - decider_version
+        - decided_at
+        - ingested_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Monotonically increasing row ID.
+        decision_id:
+          type: string
+          description: Opaque identifier emitted by the decider; unique per tenant.
+          example: dec_01j8xkyz0000000000000001
+        tenant_id:
+          type: string
+          description: Tenant this decision belongs to.
+        team:
+          type: string
+          description: Team label from the inbound multi-tenant context.
+        app:
+          type: string
+          description: Application label.
+        env:
+          type: string
+          description: Environment label (development | staging | production).
+          example: production
+        project:
+          type: string
+          description: Project label.
+        provider_requested:
+          type: string
+          description: Provider the caller originally requested (may be empty).
+          example: openai
+        model_requested:
+          type: string
+          description: Model the caller originally requested (may be empty).
+          example: gpt-4o
+        route_requested:
+          type: string
+          description: Route/endpoint the caller originally requested.
+          example: /v1/chat/completions
+        request_id_hash:
+          type: string
+          description: SHA-256 hex hash of the original request ID (never the raw ID).
+        provider_chosen:
+          type: string
+          description: Provider the decider selected.
+          example: anthropic
+        model_chosen:
+          type: string
+          description: Model the decider selected.
+          example: claude-opus-4-5
+        route_chosen:
+          type: string
+          description: Route/endpoint the decider selected.
+        reason_chain:
+          description: |
+            Opaque JSON array emitted by the registered decider. The OSS
+            layer does not interpret its contents.
+          type: array
+          items: {}
+        alternatives:
+          description: |
+            Opaque JSON array of alternative routes considered. The OSS layer
+            does not interpret its contents.
+          type: array
+          items: {}
+        decider_version:
+          type: string
+          description: Version string of the decider that made this decision.
+        decided_at:
+          type: string
+          format: date-time
+          description: RFC 3339 nanosecond-precision timestamp when the decision was made.
+        ingested_at:
+          type: string
+          format: date-time
+          description: RFC 3339 nanosecond-precision timestamp when the row was written.
+
+    DecisionListResponse:
+      type: object
+      required:
+        - decisions
+        - next
+      properties:
+        decisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Decision'
+        next:
+          type: integer
+          format: int64
+          description: |
+            Smallest row ID on this page (the oldest entry). Pass as
+            `?cursor=` to fetch the next older page. 0 when the page is
+            empty.
+
+    DecisionStats:
+      type: object
+      required:
+        - tenant_id
+        - total
+        - by_chosen
+        - window_from
+        - window_to
+      properties:
+        tenant_id:
+          type: string
+        total:
+          type: integer
+          format: int64
+          description: Total decision count for the requested tenant + window.
+        by_chosen:
+          type: array
+          description: Breakdown by (provider_chosen, model_chosen) pair.
+          items:
+            $ref: '#/components/schemas/ChosenBucket'
+        window_from:
+          type: string
+          description: |
+            Effective start of the aggregation window (RFC 3339 nanoseconds).
+            Empty string when no from filter was applied.
+        window_to:
+          type: string
+          description: |
+            Effective end of the aggregation window (RFC 3339 nanoseconds).
+            Empty string when no to filter was applied.
+
+    ChosenBucket:
+      type: object
+      required:
+        - provider_chosen
+        - model_chosen
+        - count
+      properties:
+        provider_chosen:
+          type: string
+          example: anthropic
+        model_chosen:
+          type: string
+          example: claude-opus-4-5
+        count:
+          type: integer
+          format: int64
+
+    Readiness:
+      type: object
+      required:
+        - ready
+      properties:
+        ready:
+          type: boolean
+        reason:
+          type: string
+          description: Human-readable reason when ready=false.
+          example: warming
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+
+  responses:
+    BadRequest:
+      description: Bad request — missing or malformed parameter.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: tenant query param is required
+    NotFound:
+      description: Decision not found within this tenant's scope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: not found
+    InternalError:
+      description: Unexpected internal error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: context deadline exceeded

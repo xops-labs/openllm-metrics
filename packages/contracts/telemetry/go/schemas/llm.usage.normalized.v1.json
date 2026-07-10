@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.dev/contracts/telemetry/llm.usage.normalized/v1",
+  "title": "LLMUsageNormalized",
+  "description": "F008 canonical normalized usage event. Cost in integer USD minor units (1 unit = 0.01 USD). LLM payload fields are forbidden.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "source_event_id",
+    "source_mode",
+    "source_service",
+    "provider",
+    "model",
+    "operation",
+    "tenant",
+    "team",
+    "env",
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cost_usd_minor_units",
+    "period_start",
+    "period_end",
+    "normalized_at",
+    "source"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Schema version pinned by $id."
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Globally unique event identifier (UUIDv7 recommended). Idempotency key."
+    },
+    "source_event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "event_id of the originating raw event (e.g. llm.usage.raw.<provider>)."
+    },
+    "source_mode": {
+      "type": "string",
+      "enum": ["pull", "proxy"],
+      "description": "Whether telemetry came from a billing-API poller (pull) or gateway (proxy)."
+    },
+    "source": {
+      "type": "string",
+      "enum": ["gateway", "sdk", "exporter", "otel"],
+      "description": "Discriminator for which surface produced this event. exporter=upstream llm-usage-exporter (pull/billing); gateway=in-repo proxy (runtime); sdk=in-process SDK (runtime); otel=OTel Collector receiver."
+    },
+    "source_service": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Producing service name, e.g. apps/worker/usage-poller/openai."
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["openai", "anthropic", "google", "azure_openai", "bedrock"],
+      "description": "Canonical provider identifier; extended by future providers."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical model name."
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["chat", "completion", "embedding", "image", "audio", "moderation", "other"],
+      "description": "Normalized GenAI operation name."
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant identifier. Mandatory on every event."
+    },
+    "team": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Team identifier within the tenant."
+    },
+    "app": {
+      "type": "string",
+      "description": "Application identifier."
+    },
+    "env": {
+      "type": "string",
+      "enum": ["development", "staging", "production"],
+      "description": "Deployment environment."
+    },
+    "project": {
+      "type": "string",
+      "description": "Project identifier."
+    },
+    "region": {
+      "type": "string",
+      "description": "Provider endpoint region (e.g. us-east-1)."
+    },
+    "input_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Input/prompt token count. Integer, never null."
+    },
+    "output_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Output/completion token count. Integer, never null."
+    },
+    "total_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "input_tokens + output_tokens. Integer, never null."
+    },
+    "cost_usd_minor_units": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Cost in USD minor units (1 unit = 0.01 USD). Integer per F008 §10."
+    },
+    "request_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of provider requests aggregated into this event."
+    },
+    "period_start": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Start of the aggregation window (RFC3339 / ISO 8601)."
+    },
+    "period_end": {
+      "type": "string",
+      "format": "date-time",
+      "description": "End of the aggregation window (RFC3339 / ISO 8601)."
+    },
+    "normalized_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the normalizer produced this canonical event."
+    },
+    "request_id_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of the original request ID. Never the raw ID."
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "W3C trace context trace-id."
+    }
+  }
+}

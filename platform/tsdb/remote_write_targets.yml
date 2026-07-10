@@ -1,0 +1,89 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Remote-write target configuration examples for OpenLLM Metrics.
+#
+# PURPOSE
+# -------
+# This file is a reference template, not a live config.  Copy the relevant
+# block into prometheus.yml under the `remote_write:` key for your environment.
+#
+# The TSDB backend is intentionally swappable.  Core metric queries use only
+# standard PromQL — no VictoriaMetrics MetricsQL extensions, no Mimir-specific
+# APIs — so switching backends requires only changing this block.
+#
+# SECURITY NOTE
+# -------------
+# Never commit bearer tokens, passwords, or TLS key material to source control.
+# Inject them via environment variables or a secrets manager at deploy time.
+
+# ── Option A: VictoriaMetrics single-node ───────────────────────────────────
+#
+# remote_write:
+#   - url: "http://victoriametrics:8428/api/v1/write"
+#     queue_config:
+#       max_samples_per_send: 10000
+#       batch_send_deadline: 5s
+#     write_relabel_configs:
+#       # Drop internal Prometheus scrape meta-metrics to save cardinality.
+#       - source_labels: [__name__]
+#         regex: "scrape_(duration_seconds|samples_post_metric_relabeling|samples_scraped|series_added)"
+#         action: drop
+
+# ── Option B: Grafana Mimir (multi-tenant) ──────────────────────────────────
+#
+# Each tenant maps to an X-Scope-OrgID header value. The `tenant_id` external
+# label in prometheus.yml aligns with the tenant model introduced in F005.
+#
+# remote_write:
+#   - url: "http://mimir:9009/api/v1/push"
+#     headers:
+#       X-Scope-OrgID: "${MIMIR_TENANT_ID}"   # inject at runtime
+#     basic_auth:
+#       username: "${MIMIR_USERNAME}"
+#       password: "${MIMIR_PASSWORD}"
+#     tls_config:
+#       insecure_skip_verify: false
+#     queue_config:
+#       max_samples_per_send: 10000
+#       batch_send_deadline: 5s
+#       min_shards: 1
+#       max_shards: 10
+
+# ── Option C: Cortex / Thanos receive ───────────────────────────────────────
+#
+# remote_write:
+#   - url: "https://cortex.example.com/api/v1/push"
+#     bearer_token: "${CORTEX_BEARER_TOKEN}"   # inject at runtime
+#     tls_config:
+#       insecure_skip_verify: false
+#     queue_config:
+#       max_samples_per_send: 10000
+#       batch_send_deadline: 5s
+
+# ── Option D: Prometheus-compatible remote backend (e.g. Grafana Cloud) ────
+#
+# remote_write:
+#   - url: "https://prometheus-prod-XX-prod-XX.grafana.net/api/prom/push"
+#     basic_auth:
+#       username: "${GRAFANA_CLOUD_PROM_USER}"
+#       password: "${GRAFANA_CLOUD_API_KEY}"
+#     tls_config:
+#       insecure_skip_verify: false
+#     write_relabel_configs:
+#       - source_labels: [__name__]
+#         regex: "scrape_.*"
+#         action: drop
+
+# ── Shared queue_config guidance ─────────────────────────────────────────────
+#
+# Tune these values based on observed metric volume after F008 ships the
+# full label set and F009/F010 emit real data.
+#
+#   max_samples_per_send : 10000    # default; raise if ingestion latency is high
+#   batch_send_deadline  : 5s       # flush at most every N seconds
+#   min_shards           : 1
+#   max_shards           : 10       # raise under high-throughput workloads
+#   capacity             : 10000
+#   min_backoff          : 30ms
+#   max_backoff          : 5s

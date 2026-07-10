@@ -1,0 +1,10 @@
+# Default: let git decide based on content.
+* text=auto
+
+# Shell scripts must stay LF — CRLF breaks the shebang on Linux runners.
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# Windows batch files stay CRLF.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf

@@ -1,0 +1,37 @@
+{
+  "id": "2b3c4d5e-6f70-8192-a3b4-c5d6e7f80910",
+  "name": "dev-allowlist-cheap-models",
+  "description": "Dev environments may only use the listed lower-cost models. Recorded as data; enforcement semantics live in the evaluator.",
+  "tenant": "11111111-1111-1111-1111-111111111111",
+  "version": 1,
+  "effective_from": "2026-05-01T00:00:00Z",
+  "effective_to": null,
+  "enabled": true,
+  "scope": {
+    "teams": [],
+    "apps": [],
+    "envs": ["dev", "development"],
+    "providers": [],
+    "models": []
+  },
+  "rules": [
+    {
+      "id": "dev-allow-cheap",
+      "kind": "allow_model",
+      "parameters": {
+        "models": ["gpt-4o-mini", "claude-3-5-haiku", "gemini-1.5-flash"]
+      }
+    },
+    {
+      "id": "dev-deny-premium",
+      "kind": "deny_model",
+      "parameters": {
+        "models": ["gpt-4.1", "claude-3-5-sonnet", "claude-3-opus"]
+      }
+    }
+  ],
+  "labels": {
+    "owner": "security",
+    "ticket": "SEC-217"
+  }
+}

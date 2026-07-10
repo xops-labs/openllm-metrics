@@ -1,0 +1,316 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# SLO burn-rate recording rules.
+#
+# These rules pre-compute the sub-window error fractions referenced by the
+# multi-window multi-burn-rate alerts in alerts.yaml. Pre-computation keeps
+# alert evaluation cheap (one PromQL load per evaluation interval instead of
+# four), and gives dashboards a stable series to plot.
+#
+# Convention:
+#   sli:<objective_type>:error_ratio:<window>
+#   sli:<objective_type>:burn_rate:<window>
+#
+# Each series carries the canonical label set (tenant, team, app, provider,
+# model where applicable) so dashboards can filter and so alerts can route
+# notifications to the correct owner.
+#
+# Source metrics:
+#   llm_gateway_latency_seconds  (histogram) - per-request latency, emitted by the gateway (F018)
+#   llm_gateway_requests_total   (counter)   - per-request counter with status_code, emitted by the gateway (F018)
+#   llm_estimated_cost_usd       (counter)   - estimated USD cost per call, arrives with the cost pipeline (F017)
+#
+# The gateway emits the latency and request series today, so the latency and
+# availability rules are live in any deployment that scrapes the gateway.
+# Until the cost pipeline emits llm_estimated_cost_usd, the cost rules
+# evaluate against zero series and stay quiet — by design, no false positives
+# on a partially deployed stack.
+
+groups:
+  # -------------------------------------------------------------------------
+  # Latency SLO (p99): error ratio = fraction of requests slower than 5s.
+  # The 5s bound matches the example SLO at platform/slo/examples/latency-p99.yaml.
+  # Operators with a different bound should clone these rules and adjust the
+  # le="5" selector to their own bucket boundary.
+  # -------------------------------------------------------------------------
+  - name: openllm_slo_latency_recording
+    interval: 30s
+    rules:
+      - record: sli:latency_p99:error_ratio:1h
+        expr: |-
+          1 - (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_latency_seconds_bucket{le="5"}[1h])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_latency_seconds_count[1h])
+              ),
+              1
+            )
+          )
+
+      - record: sli:latency_p99:error_ratio:6h
+        expr: |-
+          1 - (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_latency_seconds_bucket{le="5"}[6h])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_latency_seconds_count[6h])
+              ),
+              1
+            )
+          )
+
+      - record: sli:latency_p99:error_ratio:1d
+        expr: |-
+          1 - (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_latency_seconds_bucket{le="5"}[1d])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_latency_seconds_count[1d])
+              ),
+              1
+            )
+          )
+
+      - record: sli:latency_p99:error_ratio:3d
+        expr: |-
+          1 - (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_latency_seconds_bucket{le="5"}[3d])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_latency_seconds_count[3d])
+              ),
+              1
+            )
+          )
+
+  # -------------------------------------------------------------------------
+  # Availability SLO: error ratio = non-2xx fraction of gateway requests.
+  # status_code carries the HTTP status; we exclude 2xx by negation so any
+  # 3xx/4xx/5xx counts as a breach (consistent with operator expectations for
+  # an LLM API gateway).
+  # -------------------------------------------------------------------------
+  - name: openllm_slo_availability_recording
+    interval: 30s
+    rules:
+      - record: sli:availability:error_ratio:1h
+        expr: |-
+          sum by (tenant, team, app, provider, model) (
+            rate(llm_gateway_requests_total{status_code!~"2.."}[1h])
+          )
+          /
+          clamp_min(
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_requests_total[1h])
+            ),
+            1
+          )
+
+      - record: sli:availability:error_ratio:6h
+        expr: |-
+          sum by (tenant, team, app, provider, model) (
+            rate(llm_gateway_requests_total{status_code!~"2.."}[6h])
+          )
+          /
+          clamp_min(
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_requests_total[6h])
+            ),
+            1
+          )
+
+      - record: sli:availability:error_ratio:1d
+        expr: |-
+          sum by (tenant, team, app, provider, model) (
+            rate(llm_gateway_requests_total{status_code!~"2.."}[1d])
+          )
+          /
+          clamp_min(
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_requests_total[1d])
+            ),
+            1
+          )
+
+      - record: sli:availability:error_ratio:3d
+        expr: |-
+          sum by (tenant, team, app, provider, model) (
+            rate(llm_gateway_requests_total{status_code!~"2.."}[3d])
+          )
+          /
+          clamp_min(
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_gateway_requests_total[3d])
+            ),
+            1
+          )
+
+  # -------------------------------------------------------------------------
+  # Cost-per-call SLO: error ratio = fraction of windows where avg cost-per-call
+  # exceeds the $0.02 bound from the example SLO at
+  # platform/slo/examples/cost-per-call.yaml. Implemented as a ratio of
+  # estimated cost dollars over requests; values >0.02 are treated as breaches.
+  # The recording rule produces a 0/1 indicator using the > operator pattern
+  # adapted to Prometheus (bool modifier) so the burn-rate semantics still
+  # hold downstream.
+  # -------------------------------------------------------------------------
+  - name: openllm_slo_cost_recording
+    interval: 60s
+    rules:
+      - record: sli:cost_per_call:error_ratio:1h
+        expr: |-
+          (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_estimated_cost_usd[1h])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_requests_total[1h])
+              ),
+              1
+            )
+          ) > bool 0.02
+
+      - record: sli:cost_per_call:error_ratio:6h
+        expr: |-
+          (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_estimated_cost_usd[6h])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_requests_total[6h])
+              ),
+              1
+            )
+          ) > bool 0.02
+
+      - record: sli:cost_per_call:error_ratio:1d
+        expr: |-
+          (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_estimated_cost_usd[1d])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_requests_total[1d])
+              ),
+              1
+            )
+          ) > bool 0.02
+
+      - record: sli:cost_per_call:error_ratio:3d
+        expr: |-
+          (
+            sum by (tenant, team, app, provider, model) (
+              rate(llm_estimated_cost_usd[3d])
+            )
+            /
+            clamp_min(
+              sum by (tenant, team, app, provider, model) (
+                rate(llm_gateway_requests_total[3d])
+              ),
+              1
+            )
+          ) > bool 0.02
+
+  # -------------------------------------------------------------------------
+  # Error budget remaining (gauge-like recording rules). Dashboards plot these
+  # directly. The "remaining" is expressed as a fraction in [0,1] of the
+  # 30-day error budget consumed so far in the rolling window.
+  # -------------------------------------------------------------------------
+  - name: openllm_slo_budget_recording
+    interval: 60s
+    rules:
+      # Latency p99 target 0.99 -> error budget = 0.01 over 30d.
+      # Remaining = 1 - (observed_30d_error_ratio / 0.01), clamped to [0,1].
+      - record: slo:latency_p99:budget_remaining:30d
+        expr: |-
+          clamp_min(
+            clamp_max(
+              1 - (
+                (
+                  1 - (
+                    sum by (tenant, team, app, provider, model) (
+                      rate(llm_gateway_latency_seconds_bucket{le="5"}[30d])
+                    )
+                    /
+                    clamp_min(
+                      sum by (tenant, team, app, provider, model) (
+                        rate(llm_gateway_latency_seconds_count[30d])
+                      ),
+                      1
+                    )
+                  )
+                ) / 0.01
+              ),
+              1
+            ),
+            0
+          )
+
+      # Availability target 0.995 -> error budget = 0.005 over 30d.
+      - record: slo:availability:budget_remaining:30d
+        expr: |-
+          clamp_min(
+            clamp_max(
+              1 - (
+                (
+                  sum by (tenant, team, app, provider, model) (
+                    rate(llm_gateway_requests_total{status_code!~"2.."}[30d])
+                  )
+                  /
+                  clamp_min(
+                    sum by (tenant, team, app, provider, model) (
+                      rate(llm_gateway_requests_total[30d])
+                    ),
+                    1
+                  )
+                ) / 0.005
+              ),
+              1
+            ),
+            0
+          )
+
+      # Cost-per-call target 0.95 -> error budget = 0.05 over 30d.
+      - record: slo:cost_per_call:budget_remaining:30d
+        expr: |-
+          clamp_min(
+            clamp_max(
+              1 - (
+                (
+                  (
+                    sum by (tenant, team, app, provider, model) (
+                      rate(llm_estimated_cost_usd[30d])
+                    )
+                    /
+                    clamp_min(
+                      sum by (tenant, team, app, provider, model) (
+                        rate(llm_gateway_requests_total[30d])
+                      ),
+                      1
+                    )
+                  ) > bool 0.02
+                ) / 0.05
+              ),
+              1
+            ),
+            0
+          )

@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openllm-metrics.dev/contracts/telemetry/llm.cost.estimated/v1",
+  "title": "LLMCostEstimated",
+  "description": "Runtime-side cost estimate produced by apps/worker/cost-mapper. The transform is pure: tokens × catalog rate = USD. No scoring, no ranking, no routing. event_id is a deterministic hash of (source_event_id, catalog_version) so replays are idempotent. Cost in integer USD minor units (1 unit = 0.01 USD).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "source_event_id",
+    "source",
+    "source_service",
+    "provider",
+    "model",
+    "tenant",
+    "team",
+    "env",
+    "input_tokens",
+    "output_tokens",
+    "estimated_cost_usd_minor_units",
+    "catalog_version",
+    "estimated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Globally unique event identifier. Derived from SHA-256 of (source_event_id, catalog_version) so the same upstream event re-priced against the same catalog produces the same id."
+    },
+    "source_event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "event_id of the originating llm.runtime.normalized event."
+    },
+    "source": {
+      "type": "string",
+      "enum": ["gateway", "sdk"],
+      "description": "Runtime surface that produced the source event. Only runtime sources are priced — exporter-sourced events already carry reconciled cost."
+    },
+    "source_service": {
+      "type": "string",
+      "const": "apps/worker/cost-mapper",
+      "description": "Producing service name."
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical provider slug (lowercased)."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical model name (lowercased)."
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "team": {
+      "type": "string",
+      "minLength": 1
+    },
+    "app": {
+      "type": "string"
+    },
+    "env": {
+      "type": "string",
+      "enum": ["development", "staging", "production"]
+    },
+    "project": {
+      "type": "string"
+    },
+    "region": {
+      "type": "string"
+    },
+    "input_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "output_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "estimated_cost_usd_minor_units": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Estimated cost in USD minor units (1 unit = 0.01 USD). Integer per F008 §10."
+    },
+    "catalog_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Version stamp of the pricing catalog used for this estimate. Operators bump the catalog via a PR; replays against the same catalog version reproduce the same event."
+    },
+    "catalog_approximate": {
+      "type": "boolean",
+      "description": "True when the catalog entry is marked as an approximation (e.g. unlisted variant priced against the closest known model)."
+    },
+    "pricing_currency": {
+      "type": "string",
+      "description": "Three-letter pricing currency from the catalog entry. USD when the catalog rate is dollar-denominated."
+    },
+    "estimated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp at which the cost-mapper produced this estimate."
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp from the originating runtime event, when present."
+    }
+  }
+}

@@ -1,0 +1,32 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# AWS Bedrock public list prices (USD per 1,000 tokens), on-demand.
+#
+# Source: https://aws.amazon.com/bedrock/pricing/ (snapshot late 2025).
+# APPROXIMATE on-demand list prices. Provisioned throughput, batch, and
+# region-specific rates are NOT reflected here. Update via PR.
+provider: bedrock
+currency: USD
+unit: per_1k_tokens
+approximate: true
+effective_from: '2025-10-01T00:00:00Z'
+models:
+  - model: anthropic.claude-opus-4
+    input_per_1k: 0.0150
+    output_per_1k: 0.0750
+  - model: anthropic.claude-sonnet-4
+    input_per_1k: 0.0030
+    output_per_1k: 0.0150
+  - model: anthropic.claude-3-5-sonnet
+    input_per_1k: 0.0030
+    output_per_1k: 0.0150
+  - model: meta.llama3-70b-instruct
+    input_per_1k: 0.00265
+    output_per_1k: 0.00350
+  - model: mistral.mistral-large
+    input_per_1k: 0.0040
+    output_per_1k: 0.0120
+  - model: amazon.titan-text-express
+    input_per_1k: 0.00020
+    output_per_1k: 0.00060

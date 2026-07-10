@@ -1,0 +1,39 @@
+version: '2'
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - exhaustive
+    - noctx
+    - bodyclose
+    - contextcheck
+    - nilerr
+  exclusions:
+    paths:
+      - vendor
+      - .*/testdata
+    rules:
+      - path: '_test.go'
+        linters:
+          - errcheck
+      - path: 'schema-lint/go/cmd/schema-lint/main.go'
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/yasvanth511/openllm-metrics-oss
+
+run:
+  timeout: 5m

@@ -1,0 +1,62 @@
+name: Bug report
+description: Something broke — a service, the console, an SDK, a dashboard, or the compose stack.
+title: 'bug: '
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Never paste prompts, completions, provider API keys, or DSNs** — operational telemetry only, same rule the platform follows.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - gateway (proxy mode)
+        - metrics-endpoint / Prometheus exposition
+        - usage poller / billing reconciliation
+        - cost-mapper / reconciler / quota-risk / notifier
+        - policy-service / audit-service / decision-service
+        - admin console (web)
+        - SDK (.NET / Python / Node / Go)
+        - OTel Collector receiver
+        - docker compose / local stack
+        - dashboards / alert rules
+        - docs
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. docker compose up -d
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / output
+      description: 'Sanitize first: no API keys, no Authorization headers, no prompt or completion text.'
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: e.g. main @ c9ecef3, or image tag
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: 'e.g. Docker Desktop 4.30 / WSL2, Go 1.25.0, Node 20'

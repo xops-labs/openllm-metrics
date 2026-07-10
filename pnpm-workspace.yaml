@@ -1,0 +1,5 @@
+packages:
+  # TypeScript service frontends and web apps
+  - 'apps/web/*'
+  # Shared TypeScript packages (contracts, SDKs, schema validators, etc.)
+  - 'packages/*'

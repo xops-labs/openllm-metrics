@@ -1,0 +1,28 @@
+{{/*
+Copyright 2026 Yasvanth Udayakumar
+Licensed under the Apache License, Version 2.0.
+*/}}
+{{- if .Values.metricsEndpoint.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openllm-metrics.fullname" . }}-metrics-endpoint
+  labels:
+    {{- include "openllm-metrics.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics-endpoint
+    app.kubernetes.io/name: metrics-endpoint
+  {{- with .Values.metricsEndpoint.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.metricsEndpoint.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.metricsEndpoint.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "openllm-metrics.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics-endpoint
+{{- end }}

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!-- NuGet package metadata. We never auto-publish from this repo; this -->
+    <!-- block exists so `dotnet pack` produces a well-formed .nupkg locally. -->
+    <PackageId>OpenLLM.Metrics</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>OpenLLM Metrics contributors</Authors>
+    <Description>Runtime instrumentation SDK for OpenLLM Metrics. Emits OpenTelemetry GenAI semantic-convention spans and metrics for LLM calls. Never collects prompt or completion text.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/yasvanth511/openllm-metrics-oss</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/yasvanth511/openllm-metrics-oss</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>opentelemetry;genai;llm;observability;metrics;openai;anthropic;azure;bedrock</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Api" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+  </ItemGroup>
+
+</Project>

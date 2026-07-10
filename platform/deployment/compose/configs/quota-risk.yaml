@@ -1,0 +1,28 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Quota & rate-limit risk model (F026) — wired for the quickstart compose.
+#
+# Consumes normalized usage/runtime events and publishes a quota-risk signal.
+# No estimates flow until an upstream producer (the exporter pull path or a
+# gateway/SDK runtime producer) is connected — expected on a fresh stack.
+
+server:
+  port: 8084
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-quota-risk-quickstart
+  consumer_group: openllm-quota-risk-quickstart
+  input_topics:
+    - llm.usage.normalized
+    - llm.runtime.normalized
+  output_topic: llm.quota.risk.v1
+
+risk:
+  window_seconds: 3600
+  refresh_interval_seconds: 60
+
+defaults:
+  tenant: quickstart-tenant

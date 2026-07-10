@@ -1,0 +1,36 @@
+# OpenLLM Metrics code owners.
+# Format: <path> <owner> ...
+# GitHub matches the LAST line that fits a given file path.
+
+# Global default: every change requires owner review.
+* @yasvanth511
+
+# IP-sensitive root documents.
+/LICENSING.md @yasvanth511
+/LICENSE @yasvanth511
+/SECURITY.md @yasvanth511
+
+# Code ownership and repository governance.
+/.github/CODEOWNERS @yasvanth511
+/.github/ @yasvanth511
+
+# Secret-scanning configuration.
+/.gitleaks.toml @yasvanth511
+
+# Extension boundary: the public Go interfaces that the enterprise-only
+# decisioning implementations register against in the private enterprise repo.
+# Any change here is a contract change and requires owner review.
+/packages/extensions/go/ @yasvanth511
+
+# Telemetry redaction interceptor. Bypassing the redactor risks leaking
+# prompt, completion, and provider credential material into traces, logs,
+# and metrics. Owner review required.
+/packages/telemetry/go/redact.go @yasvanth511
+
+# Observability configuration (OTel Collector pipelines, redaction processors,
+# scrape targets) is the externally observable boundary of the platform.
+/platform/observability/ @yasvanth511
+
+# Database schema for security-critical services.
+/platform/db/audit/ @yasvanth511
+/platform/db/control_plane/ @yasvanth511

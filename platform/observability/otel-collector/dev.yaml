@@ -1,0 +1,97 @@
+# OpenLLM Metrics — OpenTelemetry Collector reference config (dev)
+#
+# Local development pipeline. Traces stream to stdout for inspection; metrics
+# are exposed on a Prometheus scrape endpoint that the existing TSDB stack at
+# platform/tsdb/docker-compose.yml can scrape directly.
+#
+# Logs are read from container stdout via the filelog receiver; the shared
+# Go telemetry library (packages/telemetry/go) emits already-redacted JSON
+# lines, so the Collector only adds resource attributes and routes them.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  filelog:
+    include:
+      - /var/log/openllm-metrics/*.log
+    start_at: end
+    operators:
+      - type: json_parser
+
+processors:
+  # Defense in depth: even though packages/telemetry/go redacts in-process,
+  # the Collector strips the same key set again. Either layer alone is
+  # sufficient; both together protect against a buggy SDK release.
+  attributes/redact:
+    actions:
+      - key: authorization
+        action: delete
+      - key: api_key
+        action: delete
+      - key: x-api-key
+        action: delete
+      - key: secret
+        action: delete
+      - key: password
+        action: delete
+      - key: token
+        action: delete
+      - key: prompt
+        action: delete
+      - key: completion
+        action: delete
+      - key: messages
+        action: delete
+      - key: input
+        action: delete
+      - key: output
+        action: delete
+      - key: content
+        action: delete
+
+  batch:
+    send_batch_size: 1024
+    timeout: 1s
+
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: dev
+        action: upsert
+
+exporters:
+  # Stdout for traces — easy to inspect in `docker compose logs`.
+  debug:
+    verbosity: detailed
+  # Prometheus scrape endpoint — wired into platform/tsdb/prometheus.yml as
+  # the `openllm_otel_collector` job.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: openllm
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [attributes/redact, resource, batch]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      processors: [attributes/redact, resource, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp, filelog]
+      processors: [attributes/redact, resource, batch]
+      exporters: [debug]
+  telemetry:
+    logs:
+      level: info

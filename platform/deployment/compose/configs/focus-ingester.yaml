@@ -1,0 +1,43 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# FOCUS-ingester config — wired for the quickstart compose.
+#
+# Pre-conditions for end-to-end operation:
+#   - Postgres has the control_plane.label_mappings and
+#     control_plane.focus_records tables. Run the control_plane migrations
+#     (db/migrations or platform/db/control_plane/migrations) before bringing
+#     this service up.
+#   - An upstream `llm-usage-exporter` (https://github.com/xops-labs/llm-usage-exporter)
+#     is reachable at focus.url and exposes a FOCUS-shaped /focus.json snapshot.
+#     The quickstart does not ship one; point this at your existing exporter
+#     or leave the placeholder and observe the
+#     `llm_focus_ingester_poll_failure_total` counter increase until you wire
+#     one up.
+#
+# DSN is read from the env var named by database.dsn_env
+# (`OPENLLM_CONTROL_PLANE_DSN`) — never log it.
+
+server:
+  port: 8082
+
+focus:
+  url: http://llm-usage-exporter:9090/focus.json
+  # /focus.json is a billing snapshot — frequent polling does not produce
+  # fresher data. Default is 1 hour upstream; the quickstart sets 5 minutes
+  # so operators see the join shape exercise faster on a fresh stack.
+  poll_interval_seconds: 300
+  poll_timeout_seconds: 30
+
+database:
+  dsn_env: OPENLLM_CONTROL_PLANE_DSN
+  mapping_cache_ttl_seconds: 300
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-focus-ingester-quickstart
+
+defaults:
+  tenant: quickstart-tenant
+  env: development

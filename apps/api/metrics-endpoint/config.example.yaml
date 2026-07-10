@@ -1,0 +1,35 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# OpenLLM Metrics — metrics-endpoint service (F010) example config.
+#
+# This service is the BUS-DRIVEN Prometheus exposition aggregator.
+# It is NOT the same surface as the per-provider poller's local /metrics
+# endpoint (F009). See README.md for the distinction.
+
+server:
+  # TCP port the /metrics, /healthz, /readyz HTTP surface binds to.
+  # Prometheus scrape convention is 9090; pick anything you like.
+  port: 9090
+
+bus:
+  # Kafka / Redpanda broker list. Single host:port works for local dev;
+  # comma-separated or multi-line list for cluster deployments.
+  brokers:
+    - localhost:19092
+  client_id: openllm-metrics-endpoint
+  # Consumer group name. Keep stable across restarts to resume from the
+  # last committed offset. Leave EMPTY to always rebuild from the earliest
+  # retained record (heavier replay, but maximum determinism).
+  group: openllm-metrics-endpoint
+  # Topics the aggregator subscribes to. Defaults to the two F008 canonical
+  # normalized streams.
+  topics:
+    - llm.usage.normalized
+    - llm.runtime.normalized
+
+replay:
+  # How far back to rewind on a fresh consumer group. Default 168h matches
+  # platform/bus/topics.yaml retention so the aggregator can fully rebuild
+  # in-memory state on a cold start within the bus retention budget.
+  window_hours: 168

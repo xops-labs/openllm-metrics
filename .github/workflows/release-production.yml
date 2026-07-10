@@ -1,0 +1,234 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Production release workflow (F011).
+#
+# Trigger: push of a tag matching `v*` (e.g. v0.1.0). Builds, signs, and
+# publishes all service container images to GHCR, generates a CycloneDX
+# SBOM per image, and runs a Trivy vulnerability scan that fails the job
+# on CRITICAL findings (HIGH warns only).
+#
+# Services published in this workflow:
+#   ghcr.io/<owner>/openllm-metrics/gateway:<tag>
+#   ghcr.io/<owner>/openllm-metrics/metrics-endpoint:<tag>
+#   ghcr.io/<owner>/openllm-metrics/openai-poller:<tag>
+#   ghcr.io/<owner>/openllm-metrics/label-translator:<tag>
+#   ghcr.io/<owner>/openllm-metrics/focus-ingester:<tag>
+#   ghcr.io/<owner>/openllm-metrics/cost-mapper:<tag>
+#   ghcr.io/<owner>/openllm-metrics/reconciler:<tag>
+#   ghcr.io/<owner>/openllm-metrics/quota-risk:<tag>
+#   ghcr.io/<owner>/openllm-metrics/policy-service:<tag>
+#   ghcr.io/<owner>/openllm-metrics/audit-service:<tag>
+#   ghcr.io/<owner>/openllm-metrics/decision-service:<tag>
+#   ghcr.io/<owner>/openllm-metrics/analytics-service:<tag>
+#   ghcr.io/<owner>/openllm-metrics/notifier:<tag>
+#   ghcr.io/<owner>/openllm-metrics/admin-console:<tag>
+#
+# Verify signatures locally:
+#   cosign verify \
+#     --certificate-identity-regexp 'https://github.com/.+/openllm-metrics-oss/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     ghcr.io/<owner>/openllm-metrics/<service>:<tag>
+
+name: release-production
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Allows operators to dry-run the build (without publishing) from the UI.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (without leading 'v'). Defaults to a dev SHA."
+        required: false
+        default: ''
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Required for cosign keyless signing (OIDC against the GHA token issuer).
+  id-token: write
+  # Required to push images to GHCR.
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # Image namespace under the registry. GHCR convention is <owner>/<repo>/<image>.
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}/openllm-metrics
+
+jobs:
+  build-and-publish:
+    name: build / sign / scan (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Gateway ────────────────────────────────────────────────────────
+          - service: gateway
+            dockerfile: apps/gateway/Dockerfile
+          # ── API services ───────────────────────────────────────────────────
+          - service: metrics-endpoint
+            dockerfile: apps/api/metrics-endpoint/Dockerfile
+          - service: policy-service
+            dockerfile: apps/api/policy-service/Dockerfile
+          - service: audit-service
+            dockerfile: apps/api/audit-service/Dockerfile
+          - service: decision-service
+            dockerfile: apps/api/decision-service/Dockerfile
+          - service: analytics-service
+            dockerfile: apps/api/analytics-service/Dockerfile
+          # ── Workers ────────────────────────────────────────────────────────
+          - service: openai-poller
+            dockerfile: apps/worker/usage-poller/openai/Dockerfile
+          - service: label-translator
+            dockerfile: apps/worker/label-translator/Dockerfile
+          - service: focus-ingester
+            dockerfile: apps/worker/focus-ingester/Dockerfile
+          - service: cost-mapper
+            dockerfile: apps/worker/cost-mapper/Dockerfile
+          - service: reconciler
+            dockerfile: apps/worker/reconciler/Dockerfile
+          - service: quota-risk
+            dockerfile: apps/worker/quota-risk/Dockerfile
+          - service: notifier
+            dockerfile: apps/worker/notifier/Dockerfile
+          # ── Admin console (Next.js) ────────────────────────────────────────
+          - service: admin-console
+            dockerfile: apps/web/admin-console/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve image tag
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            # Strip leading 'v' for the image tag while keeping it for the
+            # SemVer label on the OCI metadata.
+            image_tag="${tag#v}"
+            version="$tag"
+          else
+            input="${{ github.event.inputs.tag }}"
+            if [ -n "$input" ]; then
+              image_tag="$input"
+              version="v$input"
+            else
+              image_tag="dev-${GITHUB_SHA::7}"
+              version="0.0.0-dev"
+            fi
+          fi
+          image_ref="${REGISTRY}/${IMAGE_NAMESPACE}/${{ matrix.service }}"
+          echo "image_ref=${image_ref}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          provenance: true
+          sbom: false # SBOM generated separately by anchore/sbom-action
+          tags: |
+            ${{ steps.meta.outputs.image_ref }}:${{ steps.meta.outputs.image_tag }}
+            ${{ steps.meta.outputs.image_ref }}:latest
+          build-args: |
+            IMAGE_VERSION=${{ steps.meta.outputs.version }}
+            IMAGE_REVISION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.run_started_at }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.0
+
+      - name: Sign image (keyless OIDC)
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          set -euo pipefail
+          cosign sign --yes \
+            "${{ steps.meta.outputs.image_ref }}@${{ steps.build.outputs.digest }}"
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.image_ref }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          artifact-name: sbom-${{ matrix.service }}-${{ steps.meta.outputs.image_tag }}.cdx.json
+          output-file: sbom-${{ matrix.service }}.cdx.json
+
+      - name: Attest SBOM with cosign
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          set -euo pipefail
+          cosign attest --yes \
+            --type cyclonedx \
+            --predicate sbom-${{ matrix.service }}.cdx.json \
+            "${{ steps.meta.outputs.image_ref }}@${{ steps.build.outputs.digest }}"
+
+      # Scan via the official Trivy container rather than trivy-action — the
+      # action's bundled install.sh path proved non-deterministic across
+      # versions. The GHCR login above wrote credentials to ~/.docker that we
+      # mount read-only so Trivy can pull the just-pushed private image; a
+      # shared workspace cache avoids re-downloading the vuln DB between the
+      # two passes.
+      - name: Trivy scan — fail on CRITICAL
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ github.workspace }}/.trivycache"
+          docker run --rm \
+            -v "$HOME/.docker/config.json:/root/.docker/config.json:ro" \
+            -v "${{ github.workspace }}/.trivycache:/root/.cache/trivy" \
+            aquasec/trivy:0.65.0 image \
+              --severity CRITICAL \
+              --exit-code 1 \
+              --ignore-unfixed \
+              --pkg-types os,library \
+              --format table \
+              "${{ steps.meta.outputs.image_ref }}@${{ steps.build.outputs.digest }}"
+
+      - name: Trivy scan — warn on HIGH
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$HOME/.docker/config.json:/root/.docker/config.json:ro" \
+            -v "${{ github.workspace }}/.trivycache:/root/.cache/trivy" \
+            aquasec/trivy:0.65.0 image \
+              --severity HIGH \
+              --exit-code 0 \
+              --ignore-unfixed \
+              --pkg-types os,library \
+              --format table \
+              "${{ steps.meta.outputs.image_ref }}@${{ steps.build.outputs.digest }}"
+
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-${{ matrix.service }}-${{ steps.meta.outputs.image_tag }}
+          path: sbom-${{ matrix.service }}.cdx.json
+          retention-days: 90

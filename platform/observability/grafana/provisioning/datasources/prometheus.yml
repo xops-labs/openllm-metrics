@@ -1,0 +1,30 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Grafana datasource provisioning — observability stack.
+#
+# Provisions a Prometheus datasource that the SLO dashboards, FinOps
+# dashboard, and alert rules consume. The datasource uid "prometheus" is
+# the value hardcoded in the SLO dashboard variables so the dashboards
+# load correctly without manual wiring.
+#
+# Mount into Grafana at:
+#   /etc/grafana/provisioning/datasources/prometheus.yml
+#
+# PROMETHEUS_URL defaults to http://prometheus:9090. Override via environment
+# variable in the compose/Helm stack if your Prometheus is on a different host.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: ${PROMETHEUS_URL:-http://prometheus:9090}
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      # Enable exemplars for trace linking when Tempo is configured.
+      exemplarTraceIdDestinations: []

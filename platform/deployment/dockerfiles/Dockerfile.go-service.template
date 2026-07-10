@@ -1,0 +1,46 @@
+# Go service Dockerfile template for OpenLLM Metrics.
+#
+# Copy this file to your service directory and rename it to Dockerfile.
+# Replace SERVICE_NAME with the actual binary name.
+# Replace SERVICE_MODULE_PATH with the Go module path for the service.
+#
+# Example usage:
+#   cp platform/deployment/dockerfiles/Dockerfile.go-service.template apps/api/gateway/Dockerfile
+#   sed -i 's/SERVICE_NAME/gateway/g; s|SERVICE_MODULE_PATH|apps/api/gateway|g' apps/api/gateway/Dockerfile
+
+# ── Build stage ────────────────────────────────────────────────────────────
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /build
+
+# Install CA certificates for TLS in the scratch image
+RUN apk --no-cache add ca-certificates tzdata
+
+# Copy workspace descriptor first for better caching
+COPY go.work go.work.sum* ./
+
+# Copy the specific service module
+COPY SERVICE_MODULE_PATH/ ./SERVICE_MODULE_PATH/
+
+# Build the binary
+WORKDIR /build/SERVICE_MODULE_PATH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" \
+    -o /bin/SERVICE_NAME .
+
+# ── Runtime stage ──────────────────────────────────────────────────────────
+FROM scratch
+
+# Copy CA certs and timezone data from build stage
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
+# Copy the compiled binary
+COPY --from=builder /bin/SERVICE_NAME /bin/SERVICE_NAME
+
+# Non-root UID convention: 65534 (nobody)
+USER 65534:65534
+
+EXPOSE 8080
+
+ENTRYPOINT ["/bin/SERVICE_NAME"]

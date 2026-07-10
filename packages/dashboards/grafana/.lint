@@ -1,0 +1,9 @@
+exclusions:
+  template-job-rule:
+    reason: "OpenLLM Metrics' Phase 1 metrics carry no `job` label. Tenant scoping uses `tenant`, `team`, `env`, `app`, `provider`, `model` (see packages/contracts/metrics/go/registry.go)."
+  template-instance-rule:
+    reason: "OpenLLM Metrics' Phase 1 metrics carry no `instance` label. The aggregator service exposes one logical /metrics surface per cluster."
+  target-job-rule:
+    reason: "Queries do not select on `job` because the underlying metric registry does not include that label."
+  target-instance-rule:
+    reason: "Queries do not select on `instance` because the underlying metric registry does not include that label."

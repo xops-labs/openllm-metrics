@@ -1,0 +1,46 @@
+# OpenTelemetry Collector Builder (ocb) manifest for the OpenLLM Metrics custom distribution.
+#
+# Builds a Collector binary that includes the llmprovider receiver plus the
+# exporters and processors a typical OpenLLM Metrics deployment uses.
+#
+# Build:
+#   go install go.opentelemetry.io/collector/cmd/builder@latest
+#   builder --config platform/otel-collector/builder-config.yaml
+#
+# Run:
+#   ./_build/openllm-otelcol --config platform/otel-collector/example-config.yaml
+#
+# The Collector and contrib versions below must move together. Bump in lockstep
+# with go.opentelemetry.io/collector/* pinned in
+# platform/otel-collector/receiver/llmproviderreceiver/go.mod.
+
+dist:
+  name: openllm-otelcol
+  description: OpenLLM Metrics OpenTelemetry Collector distribution
+  output_path: ./_build
+  otelcol_version: 0.110.0
+
+receivers:
+  # Project-owned: the llmprovider receiver that consumes the OpenLLM Metrics bus.
+  - gomod: github.com/yasvanth511/openllm-metrics-oss/platform/otel-collector/receiver/llmproviderreceiver v0.1.0
+  # Standard OTLP receiver so the same binary can also accept push-mode OTLP
+  # from the gateway and the SDKs.
+  - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.110.0
+
+processors:
+  - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.110.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/attributesprocessor v0.110.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourceprocessor v0.110.0
+
+exporters:
+  - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.110.0
+  - gomod: go.opentelemetry.io/collector/exporter/otlphttpexporter v0.110.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter v0.110.0
+
+extensions:
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension v0.110.0
+
+# replaces lets ocb resolve the receiver against the in-repo source tree at
+# build time. Drop this section when the module is published behind a tag.
+replaces:
+  - github.com/yasvanth511/openllm-metrics-oss/platform/otel-collector/receiver/llmproviderreceiver => ./receiver/llmproviderreceiver

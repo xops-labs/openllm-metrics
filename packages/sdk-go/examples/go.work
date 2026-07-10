@@ -1,0 +1,16 @@
+// Copyright 2026 Yasvanth Udayakumar
+// Licensed under the Apache License, Version 2.0.
+
+// The example modules are intentionally excluded from the repo-root go.work so
+// the workspace stays free of provider dependencies. This nested workspace is
+// the one Go finds from inside examples/*, wiring each example to the SDK
+// source so a plain `go build ./...` / `go run .` works here.
+
+go 1.25.0
+
+use (
+	..
+	./anthropic
+	./bedrock
+	./openai
+)

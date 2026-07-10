@@ -1,0 +1,32 @@
+{
+  "id": "9c7c1f1a-7a3b-4f3e-9c5d-1e2f3a4b5c6d",
+  "name": "team-platform-monthly-budget",
+  "description": "Monthly USD budget for the platform team. This document records the data shape; enforcement decisions are not described here.",
+  "tenant": "11111111-1111-1111-1111-111111111111",
+  "version": 1,
+  "effective_from": "2026-05-01T00:00:00Z",
+  "effective_to": null,
+  "enabled": true,
+  "scope": {
+    "teams": ["platform"],
+    "apps": [],
+    "envs": ["prod", "production"],
+    "providers": [],
+    "models": []
+  },
+  "rules": [
+    {
+      "id": "platform-monthly-spend",
+      "kind": "budget",
+      "parameters": {
+        "amount_usd": 5000,
+        "period": "monthly",
+        "applies_to": "team"
+      }
+    }
+  ],
+  "labels": {
+    "owner": "platform-eng",
+    "cost_center": "CC-1042"
+  }
+}

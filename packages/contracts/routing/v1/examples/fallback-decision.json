@@ -1,0 +1,52 @@
+{
+  "_comment": "FABRICATED example demonstrating how rich a payload CAN be when produced by a non-trivial decider. All factor names, values, weight_hint and score_hint numbers, and rejected_because tags below are illustrative placeholders chosen to exercise the schema shape. They do NOT depict the actual factors, thresholds, weights, or ranking logic used by any real registered decider — that logic is intentionally not shown here. The OSS decision-service stores and renders whatever the registered decider emits; it does not interpret these values.",
+  "schema_version": "1",
+  "id": "01957e2c-0000-7000-8000-000000000002",
+  "tenant_id": "11111111-2222-3333-4444-555555555555",
+  "team": "platform",
+  "app": "checkout-api",
+  "env": "prod",
+  "project": "core",
+  "request": {
+    "provider_requested": "openai",
+    "model_requested": "gpt-4o",
+    "route": "/v1/chat/completions",
+    "request_id_hash": "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+  },
+  "decision": {
+    "provider_chosen": "anthropic",
+    "model_chosen": "claude-sonnet-4",
+    "route_chosen": "/v1/messages"
+  },
+  "reason_chain": [
+    {
+      "step": 1,
+      "factor": "tier_match",
+      "value": "Tier-A"
+    },
+    {
+      "step": 2,
+      "factor": "primary_status",
+      "value": "degraded"
+    },
+    {
+      "step": 3,
+      "factor": "fallback_eligible",
+      "value": true
+    }
+  ],
+  "alternatives": [
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "rejected_because": "primary_degraded"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-1.5-pro",
+      "rejected_because": "tier_mismatch"
+    }
+  ],
+  "decided_at": "2026-05-18T12:01:30Z",
+  "decider_version": "example-rich-1"
+}

@@ -1,0 +1,31 @@
+{
+  "_comment": "Example payload emitted by the OSS no-op decider (packages/extensions/go/routing). The no-op decider exists so OSS runs standalone; it does not implement routing logic. The decision-service stores and renders this event verbatim.",
+  "schema_version": "1",
+  "id": "01957e2c-0000-7000-8000-000000000001",
+  "tenant_id": "11111111-2222-3333-4444-555555555555",
+  "team": "platform",
+  "app": "checkout-api",
+  "env": "prod",
+  "project": "core",
+  "request": {
+    "provider_requested": "openai",
+    "model_requested": "gpt-4o-mini",
+    "route": "/v1/chat/completions",
+    "request_id_hash": ""
+  },
+  "decision": {
+    "provider_chosen": "openai",
+    "model_chosen": "gpt-4o-mini",
+    "route_chosen": "/v1/chat/completions"
+  },
+  "reason_chain": [
+    {
+      "step": 1,
+      "factor": "noop",
+      "value": "identity"
+    }
+  ],
+  "alternatives": [],
+  "decided_at": "2026-05-18T12:00:00Z",
+  "decider_version": "oss-noop"
+}

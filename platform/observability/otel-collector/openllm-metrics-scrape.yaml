@@ -1,0 +1,105 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# OpenLLM Metrics — OpenTelemetry Collector scrape sample (F011).
+#
+# Lift-and-shift snippet that drops the two Phase 1 service scrape targets
+# into an existing OTel Collector pipeline. Use when an operator is already
+# running an OTel Collector and prefers it as the scrape path instead of (or
+# in addition to) a Prometheus server.
+#
+# Merge strategy: the receivers / processors / exporters / pipelines blocks
+# below are additive — paste each block into the matching top-level block of
+# your existing Collector config. The `prometheus/openllm` receiver name and
+# the `openllm_*` pipeline names are unique so they do not collide with
+# pre-existing entries.
+#
+# Where to run:
+#   - As a sidecar next to each service: scrape `localhost:<port>`.
+#   - As a central Collector that has network reach to the service DNS names:
+#     use `metrics-endpoint:9090` and `openai-poller:8080` as below (matches
+#     the quickstart compose service names).
+#   - In Kubernetes: drop this into the Collector's ConfigMap; replace the
+#     static_configs with `kubernetes_sd_configs` keyed off pod labels
+#     `app.kubernetes.io/name=metrics-endpoint` and
+#     `app.kubernetes.io/name=openai-poller` (the helm chart at
+#     platform/deployment/helm/openllm-metrics sets these labels).
+
+receivers:
+  # Prometheus scrape receiver — the same exposition format both services
+  # speak natively. Scrape intervals mirror platform/tsdb/prometheus.yml:
+  # 30s for the aggregator (high-cardinality, low-change rate), 60s for the
+  # poller (it only emits scrape-health counters).
+  prometheus/openllm:
+    config:
+      scrape_configs:
+        - job_name: openllm_metrics_endpoint
+          scrape_interval: 30s
+          metrics_path: /metrics
+          static_configs:
+            - targets: ['metrics-endpoint:9090']
+              labels:
+                service: metrics-endpoint
+                source: openllm-metrics
+
+        - job_name: openllm_usage_poller_openai
+          scrape_interval: 60s
+          metrics_path: /metrics
+          static_configs:
+            - targets: ['openai-poller:8080']
+              labels:
+                service: usage-poller-openai
+                source: openllm-metrics
+
+processors:
+  # Light tagging so downstream tenants can split incoming series by source.
+  resource/openllm:
+    attributes:
+      - key: service.namespace
+        value: openllm-metrics
+        action: upsert
+
+  # Reuse the existing batch processor if one is already defined; otherwise
+  # uncomment.
+  # batch:
+  #   send_batch_size: 1024
+  #   timeout: 1s
+
+exporters:
+  # Choose one or both. The OTLP exporter is what you want if you also run a
+  # central collector or commercial APM; the prometheusremotewrite exporter
+  # is what you want if you ship straight to a TSDB (Mimir, VictoriaMetrics,
+  # Grafana Cloud Metrics, AMP).
+
+  otlp/openllm:
+    endpoint: ${env:OTLP_METRICS_ENDPOINT}
+    tls:
+      insecure: false
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+
+  prometheusremotewrite/openllm:
+    endpoint: ${env:PROM_REMOTE_WRITE_ENDPOINT}
+    headers:
+      Authorization: Bearer ${env:PROM_REMOTE_WRITE_TOKEN}
+    resource_to_telemetry_conversion:
+      enabled: true
+    remote_write_queue:
+      enabled: true
+      queue_size: 5000
+      num_consumers: 5
+
+service:
+  pipelines:
+    # Add to your existing `service.pipelines` block.
+    metrics/openllm:
+      receivers: [prometheus/openllm]
+      processors: [resource/openllm, batch]
+      # Pick whichever exporter(s) you defined above. Listing both is fine.
+      exporters: [otlp/openllm, prometheusremotewrite/openllm]

@@ -1,0 +1,591 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+openapi: 3.1.0
+info:
+  title: OpenLLM Metrics - policy-service
+  version: '0.1.0'
+  description: |
+    F029 policy CRUD service. Owns the policy document schema, storage, and
+    immutable version history. Performs structural validation only — it NEVER
+    evaluates a policy, computes a budget burn, or makes an enforcement
+    decision (those behaviors are outside this API).
+
+    Every request requires the caller's tenant UUID in the `X-Tenant-ID`
+    header. In a production deployment the API gateway / auth middleware sets
+    this after JWT validation; the service validates it strictly and returns
+    401 when it is absent or not a valid UUID.
+
+    The `X-Actor` header is optional but recommended: it is recorded in the
+    audit event emitted on every successful mutation. When absent, the actor
+    defaults to "unknown".
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: http://localhost:8090
+    description: Local development (default port)
+paths:
+  /v1/policies:
+    get:
+      summary: List policy headers for the tenant.
+      description: |
+        Returns all non-deleted policies (header rows: id, name, current
+        version, timestamps) for the caller's tenant, ordered by name. Documents
+        are not included — fetch a single policy by id for its document.
+      operationId: listPolicies
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Policy headers for the tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [policies]
+                properties:
+                  policies:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        tenant_id: { type: string, format: uuid }
+                        name: { type: string }
+                        current_version: { type: integer }
+                        created_at: { type: string, format: date-time }
+                        updated_at: { type: string, format: date-time }
+        '401':
+          $ref: '#/components/responses/MissingTenant'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      summary: Create a new policy (version 1).
+      description: |
+        Validates the document against the policy JSON Schema, stores it as
+        version 1, and emits an audit.event.v1 event. Returns 409 when a
+        policy with the same name already exists for the tenant.
+      operationId: createPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/Actor'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePolicyRequest'
+      responses:
+        '201':
+          description: Policy created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatePolicyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/MissingTenant'
+        '409':
+          description: A policy with the same name already exists for this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: policy_exists
+                detail: 'store: conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/policies/{id}:
+    get:
+      summary: Get the current version of a policy.
+      operationId: getPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/PolicyID'
+      responses:
+        '200':
+          description: Policy header and current document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/MissingTenant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      summary: Append a new version to an existing policy.
+      description: |
+        Validates the new document, appends a version row, and bumps the
+        current_version pointer. Previous versions remain queryable via
+        GET /v1/policies/{id}/versions/{n}.
+      operationId: updatePolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/Actor'
+        - $ref: '#/components/parameters/PolicyID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePolicyRequest'
+      responses:
+        '200':
+          description: New version recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdatePolicyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/MissingTenant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      summary: Soft-delete a policy.
+      description: |
+        Sets deleted_at on the header row. The policy and all its versions
+        remain in the database and are queryable for audit purposes.
+      operationId: deletePolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/Actor'
+        - $ref: '#/components/parameters/PolicyID'
+      responses:
+        '204':
+          description: Policy soft-deleted; no body.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/MissingTenant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/policies/{id}/versions:
+    get:
+      summary: List all versions of a policy (newest first).
+      operationId: listPolicyVersions
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/PolicyID'
+      responses:
+        '200':
+          description: Ordered list of versions (newest first).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/MissingTenant'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/policies/{id}/versions/{version}:
+    get:
+      summary: Get a specific version of a policy.
+      operationId: getPolicyVersion
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/PolicyID'
+        - name: version
+          in: path
+          required: true
+          description: Positive integer version number.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: The requested policy version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/MissingTenant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/policies/{id}/validate:
+    post:
+      summary: Validate a policy document against the JSON Schema (dry-run only).
+      description: |
+        Performs schema-level validation without storing anything. Returns
+        the same structured error list a write would produce. This endpoint
+        INTENTIONALLY does not answer whether a policy would allow or deny a
+        request — that is F030 (not implemented here).
+      operationId: validatePolicyDocument
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/PolicyID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateRequest'
+      responses:
+        '200':
+          description: |
+            Validation result. valid=true when the document conforms to the
+            schema; errors is empty in that case.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/MissingTenant'
+
+  /healthz:
+    get:
+      summary: Liveness probe.
+      description: |
+        Returns 200 once the HTTP server is bound. Does not consult the
+        store or bus.
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      summary: Readiness probe.
+      description: |
+        Returns 200 when the service is ready to serve traffic. In the
+        policy-service this always returns ready=true once the server is
+        bound (no bus consumer to wait for).
+      operationId: getReadyz
+      responses:
+        '200':
+          description: Service is ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                ready: true
+
+  /debug/counters:
+    get:
+      summary: Internal counter snapshot (development / debugging).
+      description: |
+        Returns a JSON snapshot of in-process counters (policies created/
+        updated/deleted, validations succeeded/failed, audit events
+        emitted/dropped). Not intended for production; no auth check.
+      operationId: getDebugCounters
+      responses:
+        '200':
+          description: Counter snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Key-value map of counter names to integer values.
+                additionalProperties:
+                  type: integer
+
+components:
+  parameters:
+    TenantID:
+      name: X-Tenant-ID
+      in: header
+      required: true
+      description: |
+        Caller's tenant UUID. Must be a well-formed UUID or the request is
+        rejected with 401.
+      schema:
+        type: string
+        format: uuid
+        example: 018e4c7a-1b2d-7000-8000-000000000001
+    Actor:
+      name: X-Actor
+      in: header
+      required: false
+      description: |
+        Caller principal recorded in audit events (user email, service
+        account, etc.). Defaults to "unknown" when absent.
+      schema:
+        type: string
+        example: alice@example.com
+    PolicyID:
+      name: id
+      in: path
+      required: true
+      description: UUID of the policy.
+      schema:
+        type: string
+        format: uuid
+        example: 018e4c7a-dead-7000-beef-000000000002
+
+  schemas:
+    CreatePolicyRequest:
+      type: object
+      required:
+        - name
+        - document
+      properties:
+        name:
+          type: string
+          description: Human-readable policy name; must be unique per tenant.
+          example: budget-cap-prod
+        document:
+          description: |
+            Policy document as a JSON object. Validated against the policy
+            JSON Schema before storage.
+          type: object
+          additionalProperties: true
+        comment:
+          type: string
+          description: Optional human-readable note recorded in the version row.
+          example: Initial version
+
+    CreatePolicyResponse:
+      type: object
+      required:
+        - id
+        - name
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUID assigned to the new policy.
+        name:
+          type: string
+        version:
+          type: integer
+          description: Always 1 for newly created policies.
+          example: 1
+
+    UpdatePolicyRequest:
+      type: object
+      required:
+        - document
+      properties:
+        document:
+          description: New policy document. Validated before storage.
+          type: object
+          additionalProperties: true
+        comment:
+          type: string
+          description: Optional note for this version.
+          example: Tighten token budget cap
+
+    UpdatePolicyResponse:
+      type: object
+      required:
+        - id
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          description: The newly appended version number.
+
+    PolicyDetail:
+      type: object
+      required:
+        - id
+        - name
+        - current_version
+        - created_at
+        - updated_at
+        - document
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        current_version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        document:
+          type: object
+          additionalProperties: true
+          description: The current version's document.
+
+    PolicyVersion:
+      type: object
+      required:
+        - id
+        - policy_id
+        - tenant_id
+        - version
+        - document
+        - created_by
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUID of this version row.
+        policy_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        document:
+          type: object
+          additionalProperties: true
+        created_by:
+          type: string
+          description: Actor who created this version.
+        created_at:
+          type: string
+          format: date-time
+        comment:
+          type: string
+
+    VersionListResponse:
+      type: object
+      required:
+        - policy_id
+        - versions
+      properties:
+        policy_id:
+          type: string
+          format: uuid
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyVersion'
+
+    ValidateRequest:
+      type: object
+      required:
+        - document
+      properties:
+        document:
+          type: object
+          additionalProperties: true
+          description: Policy document to validate.
+
+    ValidateResponse:
+      type: object
+      required:
+        - valid
+        - errors
+      properties:
+        valid:
+          type: boolean
+          description: True when the document conforms to the schema.
+        errors:
+          type: array
+          description: Empty when valid=true.
+          items:
+            $ref: '#/components/schemas/ValidationError'
+
+    ValidationError:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code.
+        message:
+          type: string
+          description: Human-readable description.
+        path:
+          type: string
+          description: JSON pointer to the offending field.
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+        detail:
+          type: string
+          description: Human-readable context.
+        errors:
+          type: array
+          description: Present on validation_failed responses.
+          items:
+            $ref: '#/components/schemas/ValidationError'
+
+    Readiness:
+      type: object
+      required:
+        - ready
+      properties:
+        ready:
+          type: boolean
+        reason:
+          type: string
+          description: Human-readable reason when ready=false.
+          example: warming
+
+  responses:
+    BadRequest:
+      description: Bad request — missing or malformed parameter.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    MissingTenant:
+      description: X-Tenant-ID header is absent or not a valid UUID.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: missing_tenant
+            detail: missing X-Tenant-ID header
+    NotFound:
+      description: Policy or version not found within this tenant's scope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: not_found
+            detail: policy not found
+    InternalError:
+      description: Unexpected internal error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: store_error
+            detail: context deadline exceeded

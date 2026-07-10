@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: #0f1115;
+  color: #e5e7eb;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Minimal RJSF override: drop ornamental chrome, keep semantics. */
+.rjsf .form-group {
+  margin-bottom: 0.75rem;
+}
+.rjsf label {
+  display: block;
+  font-size: 0.85rem;
+  color: #9ca3af;
+  margin-bottom: 0.25rem;
+}
+.rjsf input,
+.rjsf select,
+.rjsf textarea {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  background-color: #171a21;
+  border: 1px solid #262a33;
+  color: #e5e7eb;
+  border-radius: 0.25rem;
+}
+.rjsf .btn {
+  display: none;
+}

@@ -1,0 +1,40 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Cost-mapper config — wired for the quickstart compose.
+#
+# Pre-conditions for end-to-end operation:
+#   - Postgres has the control_plane.cost_reconciliation_drift table. Run the
+#     control_plane migrations before bringing this service up.
+#   - The pricing catalog at platform/pricing/ is mounted read-only into the
+#     container at /etc/openllm-cost-mapper/pricing/ (see the compose volume).
+#   - Runtime events on `llm.runtime.normalized` are produced by the gateway
+#     or SDK. The quickstart does not ship the gateway; the topic exists and
+#     the consumer attaches to it, but no estimates will flow until a runtime
+#     producer is wired in. This is expected for the data-path slice.
+#
+# DSN is read from the env var named by database.dsn_env
+# (`OPENLLM_CONTROL_PLANE_DSN`) — never log it.
+
+server:
+  port: 8083
+
+catalog:
+  dir: /etc/openllm-cost-mapper/pricing
+  reload_interval_seconds: 300
+
+database:
+  dsn_env: OPENLLM_CONTROL_PLANE_DSN
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-cost-mapper-quickstart
+  consumer_group: openllm-cost-mapper-quickstart
+  runtime_topic: llm.runtime.normalized
+  reconciled_topic: llm.usage.reconciled
+  estimated_topic: llm.cost.estimated
+
+defaults:
+  tenant: quickstart-tenant
+  env: development

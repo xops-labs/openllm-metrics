@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability (private disclosure)
+    url: https://github.com/yasvanth511/openllm-metrics-oss/blob/main/SECURITY.md
+    about: Please do NOT file vulnerabilities as public issues — follow the disclosure process in SECURITY.md.
+  - name: Design questions & RFCs
+    url: https://github.com/yasvanth511/openllm-metrics-oss/discussions
+    about: Larger ideas, architecture questions, and show-and-tell belong in Discussions.

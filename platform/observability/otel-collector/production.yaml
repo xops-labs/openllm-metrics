@@ -1,0 +1,137 @@
+# OpenLLM Metrics — OpenTelemetry Collector reference config (production)
+#
+# Production-grade Collector with tail sampling, defense-in-depth redaction,
+# and tuned batch processor sizes. Topology defaults to a central deployment
+# (DaemonSet collectors aggregating into a central deployment); see
+# platform/observability/otel-collector/README.md for the sidecar variant.
+#
+# Sampling per F006 README §9: 10% base ratio with all error spans force-sampled
+# by the tail-sampling processor.
+#
+# All endpoints, tokens, and TLS material are injected at deploy time. Never
+# commit secrets here.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 16
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Layer 1 of defense-in-depth redaction. The shared SDK
+  # (packages/telemetry/go) is the primary line; this is the safety net.
+  attributes/redact:
+    actions:
+      - key: authorization
+        action: delete
+      - key: api_key
+        action: delete
+      - key: x-api-key
+        action: delete
+      - key: secret
+        action: delete
+      - key: password
+        action: delete
+      - key: token
+        action: delete
+      - key: prompt
+        action: delete
+      - key: completion
+        action: delete
+      - key: messages
+        action: delete
+      - key: input
+        action: delete
+      - key: output
+        action: delete
+      - key: content
+        action: delete
+
+  # Tail sampling enforces "error spans are always sampled regardless of base
+  # ratio" — the F006 sampling rule. Without tail sampling the Go SDK applies
+  # head sampling at span start, before status is known.
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100000
+    expected_new_traces_per_sec: 1000
+    policies:
+      - name: errors-always
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: latency-outliers
+        type: latency
+        latency:
+          threshold_ms: 5000
+      - name: probabilistic-sample
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  batch:
+    send_batch_size: 16384
+    send_batch_max_size: 32768
+    timeout: 10s
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 1024
+    spike_limit_mib: 256
+
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: production
+        action: upsert
+
+exporters:
+  otlp/traces:
+    endpoint: ${env:OTLP_TRACES_ENDPOINT}
+    tls:
+      insecure: false
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 5m
+  prometheusremotewrite:
+    endpoint: ${env:PROM_REMOTE_WRITE_ENDPOINT}
+    headers:
+      Authorization: Bearer ${env:PROM_REMOTE_WRITE_TOKEN}
+    resource_to_telemetry_conversion:
+      enabled: true
+    remote_write_queue:
+      enabled: true
+      queue_size: 10000
+      num_consumers: 5
+  otlp/logs:
+    endpoint: ${env:OTLP_LOGS_ENDPOINT}
+    tls:
+      insecure: false
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, resource, tail_sampling, batch]
+      exporters: [otlp/traces]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, resource, batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, resource, batch]
+      exporters: [otlp/logs]
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      level: detailed

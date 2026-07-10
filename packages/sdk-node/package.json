@@ -1,0 +1,76 @@
+{
+  "name": "@openllm/metrics",
+  "version": "0.1.0",
+  "description": "Node.js runtime instrumentation SDK for OpenLLM Metrics — emits OTel GenAI semconv metrics and llm_* counters for multi-provider LLM API calls. Never collects prompt or completion text.",
+  "license": "Apache-2.0",
+  "author": "Yasvanth Udayakumar <yasvanth@live.in>",
+  "homepage": "https://github.com/yasvanth511/openllm-metrics-oss#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yasvanth511/openllm-metrics-oss.git",
+    "directory": "packages/sdk-node"
+  },
+  "bugs": {
+    "url": "https://github.com/yasvanth511/openllm-metrics-oss/issues"
+  },
+  "keywords": [
+    "openllm",
+    "llm",
+    "telemetry",
+    "opentelemetry",
+    "otel",
+    "gen_ai",
+    "observability",
+    "finops",
+    "openai",
+    "anthropic",
+    "gemini",
+    "bedrock"
+  ],
+  "type": "module",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs",
+      "default": "./dist/esm/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "pretest": "npm run build",
+    "test": "node --test tests/smoke.test.mjs"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.57.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",
+    "@opentelemetry/resources": "^1.30.0",
+    "@opentelemetry/sdk-metrics": "^1.30.0",
+    "@opentelemetry/sdk-node": "^0.57.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/sdk-trace-node": "^1.30.0",
+    "@types/node": "^20.12.0",
+    "typescript": "^5.5.4"
+  }
+}

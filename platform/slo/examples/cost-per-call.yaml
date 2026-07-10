@@ -1,0 +1,34 @@
+# Example SLO: average cost per chat completion stays under $0.02 for at least
+# 95% of the rolling 30-day window.
+#
+# Reads:    llm_cost_usd_total / llm_requests_total from the canonical metric
+#           registry (packages/contracts/metrics/go/registry.go). The
+#           recording rules express the same ratio at sub-window resolution.
+# Filters:  tenant=acme, team=growth, app=onboarding-assistant, model=gpt-4o-mini.
+# Window:   30d compliance accounting; burn-rate alerts evaluate 1h/6h/1d/3d.
+#
+# Note: cost SLOs only become meaningful once F017 (cost mapping engine) is
+# producing reconciled cost. Until then the same expression runs against the
+# token-derived estimate.
+
+id: acme-onboarding-cost-per-call
+name: 'Onboarding assistant cost per call < $0.02'
+description: |
+  The acme onboarding assistant must keep the average cost per LLM call under
+  two cents for at least 95% of the rolling 30-day window. Breaches typically
+  indicate prompt-bloat or accidental escalation to a premium model.
+tenant: acme
+team: growth
+app: onboarding-assistant
+objective_type: cost_per_call
+target: 0.95
+cost_bound_usd: 0.02
+window: 30d
+provider: openai
+model: gpt-4o-mini
+version: 1
+created_at: '2026-05-18T00:00:00Z'
+owner: growth@acme.example
+notification_channels:
+  - slack-growth
+  - email-finops

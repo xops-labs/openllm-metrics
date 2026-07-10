@@ -1,0 +1,25 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Grafana dashboard provider — root-stack TSDB.
+#
+# Auto-discovers any *.json dashboards dropped under
+# `platform/tsdb/grafana/provisioning/dashboards/` (e.g. phase1-finops.json),
+# which is mounted into the container at /etc/grafana/provisioning/dashboards.
+#
+# The directory must exist (mounted into the container) even when empty
+# or Grafana logs a noisy "No such file or directory" warning.
+
+apiVersion: 1
+
+providers:
+  - name: openllm-metrics
+    orgId: 1
+    folder: OpenLLM Metrics
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: true

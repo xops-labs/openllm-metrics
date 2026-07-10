@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+.next/
+coverage/
+vendor/
+platform/deployment/helm/**/templates/**
+
+# Machine-managed lockfiles — pnpm rewrites these in its own style.
+pnpm-lock.yaml

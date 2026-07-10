@@ -1,0 +1,48 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# OpenAI Usage + Cost Poller (F009) — example config.
+#
+# All sensitive material (the OpenAI Admin API key) is read from the
+# environment, NEVER from this file. The `api_key_env` value is the NAME of
+# the env var the poller will read at startup.
+
+server:
+  # Port the /metrics and /healthz HTTP surface binds to.
+  port: 8080
+
+providers:
+  openai:
+    # Disable to keep the binary running without producing events.
+    enabled: true
+    # Name of the env var holding the OpenAI Admin API key.
+    api_key_env: OPENAI_ADMIN_API_KEY
+    # How often the poller wakes. Default 300s per vision MVP.
+    polling_interval_seconds: 300
+    # Override for staging proxies or test fixtures. Default api.openai.com.
+    base_url: https://api.openai.com
+    # Open the circuit after N consecutive 5xx / network failures.
+    circuit_breaker_threshold: 5
+    # How long the circuit stays open before a probe is allowed.
+    circuit_breaker_cooldown_seconds: 60
+    # Exponential-backoff retry budget per HTTP call (429 + 5xx).
+    max_retries: 4
+    # Capacity of the in-memory LRU dedup cache; one entry per
+    # (provider, window_start, window_end, model, app, team, project) tuple.
+    dedup_cache_size: 4096
+
+bus:
+  # Kafka / Redpanda broker list. Single host:port works for local dev.
+  brokers:
+    - localhost:9092
+  client_id: openllm-openai-poller
+
+labels:
+  # All labels below are propagated into every emitted event AND every metric
+  # series. `tenant`, `team`, and `env` are MANDATORY (validated at startup).
+  env: production
+  team: ai-platform
+  tenant: tenant-001
+  app: snapcal
+  project: snapcal-prod
+  region: us-east-1

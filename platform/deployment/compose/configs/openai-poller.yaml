@@ -1,0 +1,41 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# OpenAI Usage + Cost Poller config — wired for the quickstart compose.
+#
+# Differs from apps/worker/usage-poller/openai/config.example.yaml in two
+# ways only:
+#   - `bus.brokers` points at the in-compose Redpanda broker (`redpanda:9092`)
+#     instead of `localhost:9092`.
+#   - Labels use safe `quickstart-*` placeholders so the operator does not
+#     accidentally publish telemetry under their real tenant scope before
+#     they have read the docs.
+#
+# Everything else mirrors the upstream example and is documented there.
+
+server:
+  port: 8080
+
+providers:
+  openai:
+    enabled: true
+    api_key_env: OPENAI_ADMIN_API_KEY
+    polling_interval_seconds: 300
+    base_url: https://api.openai.com
+    circuit_breaker_threshold: 5
+    circuit_breaker_cooldown_seconds: 60
+    max_retries: 4
+    dedup_cache_size: 4096
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-openai-poller-quickstart
+
+labels:
+  env: development
+  team: quickstart
+  tenant: quickstart-tenant
+  app: quickstart-app
+  project: quickstart-project
+  region: local

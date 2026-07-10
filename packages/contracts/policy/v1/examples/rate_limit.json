@@ -1,0 +1,38 @@
+{
+  "id": "abcdef01-2345-6789-abcd-ef0123456789",
+  "name": "checkout-app-burst-cap",
+  "description": "Per-app request cap data for the checkout app. The threshold is recorded here; how violations are handled is owned by the evaluator.",
+  "tenant": "11111111-1111-1111-1111-111111111111",
+  "version": 1,
+  "effective_from": "2026-05-01T00:00:00Z",
+  "effective_to": null,
+  "enabled": true,
+  "scope": {
+    "teams": ["commerce"],
+    "apps": ["checkout"],
+    "envs": ["prod", "production"],
+    "providers": ["openai", "anthropic"],
+    "models": []
+  },
+  "rules": [
+    {
+      "id": "checkout-burst",
+      "kind": "rate_limit",
+      "parameters": {
+        "requests": 600,
+        "window_seconds": 60,
+        "applies_to": "app"
+      }
+    },
+    {
+      "id": "must-have-request-id",
+      "kind": "require_tag",
+      "parameters": {
+        "tags": ["request_id", "session_id"]
+      }
+    }
+  ],
+  "labels": {
+    "owner": "commerce-platform"
+  }
+}

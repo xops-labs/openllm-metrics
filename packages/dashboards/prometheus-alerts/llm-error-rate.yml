@@ -1,0 +1,75 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# LLM error-rate alerts.
+#
+# Fires when the rolling 5-minute error fraction crosses 5% (warning) or
+# 15% (critical) for a sustained window. Breaking the series by
+# (tenant, provider, model) keeps the alert actionable: a single failing
+# model in a single tenant should page only the team that owns it.
+#
+# Runbook: platform/runbooks/llm-error-rate.md.
+
+groups:
+  - name: openllm_finops_errors
+    interval: 60s
+    rules:
+      - alert: LLMHighErrorRate
+        expr: |-
+          (
+            sum by (tenant, provider, model) (
+              rate(llm_errors_total[5m])
+            )
+            /
+            clamp_min(
+              sum by (tenant, provider, model) (
+                rate(llm_requests_total[5m])
+              ),
+              0.0001
+            )
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          tenant: '{{ $labels.tenant }}'
+          provider: '{{ $labels.provider }}'
+          model: '{{ $labels.model }}'
+          component: reliability
+        annotations:
+          summary: 'LLM error rate >5% on {{ $labels.provider }}/{{ $labels.model }} ({{ $labels.tenant }})'
+          description: |
+            Error rate for tenant={{ $labels.tenant }}, provider={{ $labels.provider }},
+            model={{ $labels.model }} is {{ $value | humanizePercentage }} over the last
+            5 minutes (threshold 5%). Validate the provider status page and
+            inspect llm_errors_total by error_type for the dominant reason.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-error-rate.md'
+
+      - alert: LLMHighErrorRate
+        expr: |-
+          (
+            sum by (tenant, provider, model) (
+              rate(llm_errors_total[5m])
+            )
+            /
+            clamp_min(
+              sum by (tenant, provider, model) (
+                rate(llm_requests_total[5m])
+              ),
+              0.0001
+            )
+          ) > 0.15
+        for: 5m
+        labels:
+          severity: critical
+          tenant: '{{ $labels.tenant }}'
+          provider: '{{ $labels.provider }}'
+          model: '{{ $labels.model }}'
+          component: reliability
+        annotations:
+          summary: 'CRITICAL LLM error rate >15% on {{ $labels.provider }}/{{ $labels.model }} ({{ $labels.tenant }})'
+          description: |
+            Error rate for tenant={{ $labels.tenant }}, provider={{ $labels.provider }},
+            model={{ $labels.model }} is {{ $value | humanizePercentage }} — page on-call.
+            Consider triggering fallback to a redundant provider or model while
+            investigating.
+          runbook_url: 'https://github.com/yasvanth511/openllm-metrics-oss/blob/main/platform/runbooks/llm-error-rate.md'

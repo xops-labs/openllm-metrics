@@ -1,0 +1,136 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Prometheus scrape configuration for OpenLLM Metrics.
+#
+# Service discovery: static_configs.
+#
+# To reload without restart (requires --web.enable-lifecycle):
+#   curl -s -XPOST http://localhost:9090/-/reload
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+  # External labels are attached to all time series and alerts shipped
+  # via remote-write or Alertmanager. Override per environment.
+  external_labels:
+    environment: dev
+    platform: openllm-metrics
+
+# ── Alert rule files ─────────────────────────────────────────────────────────
+rule_files:
+  - /etc/prometheus/alerts/*.yml
+
+# ── Alertmanager (disabled in dev; wire up for staging/production) ───────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # targets: ['alertmanager:9093']
+
+# ── Scrape configurations ────────────────────────────────────────────────────
+
+scrape_configs:
+  # Self-monitoring — Prometheus own metrics
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Grafana self-monitoring
+  - job_name: grafana
+    static_configs:
+      - targets: ['grafana:3000']
+    metrics_path: /metrics
+
+  # ── OpenLLM Metrics services ──────────────────────────────────────────────
+  #
+  # All openllm_* jobs share the same label_set defined in CARDINALITY_BUDGET.md.
+  # Services expose /metrics on the port listed below.
+  # Add a relabel_configs block when service discovery replaces static targets.
+
+  # F010 — Prometheus /metrics aggregator
+  # Enabled when apps/api/metrics-endpoint is deployed.
+  - job_name: openllm_metrics_endpoint
+    static_configs:
+      - targets: ['metrics-endpoint:9090']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: metrics-endpoint
+
+  # F009 — OpenAI usage poller (the reference pull-mode billing poller).
+  # Other provider pollers (Anthropic/Google/Azure/Bedrock) are not part of
+  # this version; add their scrape jobs when those services ship.
+  - job_name: openllm_usage_poller_openai
+    static_configs:
+      - targets: ['openai-poller:8080']
+    metrics_path: /metrics
+    scrape_interval: 60s
+    relabel_configs:
+      - target_label: service
+        replacement: openai-poller
+
+  # F018 — LLM proxy gateway (Phase 3+)
+  - job_name: openllm_gateway
+    static_configs:
+      - targets: ['gateway:8081']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: gateway
+
+  # F017 — Provider-neutral cost mapper. Pipeline self-observability
+  # (llm_cost_mapper_* : estimates emitted, unpriced/skipped events, drift errors).
+  - job_name: openllm_cost_mapper
+    static_configs:
+      - targets: ['cost-mapper:8083']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: cost-mapper
+
+  # F023 — Reconciler. Emits the llm_reconciliation_* drift/cost series that back
+  # the console reconciliation-drift card and the FinOps drift dashboard.
+  - job_name: openllm_reconciler
+    static_configs:
+      - targets: ['reconciler:8084']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: reconciler
+
+  # F026 — Quota / rate-limit risk. Emits llm_quota_* risk and usage gauges.
+  - job_name: openllm_quota_risk
+    static_configs:
+      - targets: ['quota-risk:8084']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: quota-risk
+
+  # F033 — Notifier. Delivery and alert-match self-observability (llm_notifier_*).
+  - job_name: openllm_notifier
+    static_configs:
+      - targets: ['notifier:8085']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: notifier
+
+  # F006 — OTel Collector Prometheus exporter
+  - job_name: openllm_otel_collector
+    static_configs:
+      - targets: ['otel-collector:8889']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: otel-collector

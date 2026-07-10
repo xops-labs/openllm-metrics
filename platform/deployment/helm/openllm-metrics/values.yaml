@@ -1,0 +1,178 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Default values for the openllm-metrics chart. Every key below is safe to
+# override in a `values-prod.yaml` overlay.
+
+# ── Image registry shared across both services ───────────────────────────────
+global:
+  imageRegistry: ghcr.io/yasvanth511
+  # Image pull policy. Use Always for `latest`/`dev`, IfNotPresent for tagged.
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  # Stamped onto every workload as `app.kubernetes.io/part-of`.
+  partOf: openllm-metrics
+
+# ── Shared service account ───────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  # Leave empty to derive from the release name (`<release>-openllm-metrics`).
+  name: ''
+  annotations: {}
+
+# ── Secret references ────────────────────────────────────────────────────────
+# By default the chart references an *external* secret (not managed by this
+# chart) so secret rotation does not require a helm upgrade. Set
+# `create: true` to have helm create a placeholder secret instead.
+secrets:
+  openaiAdminApiKey:
+    create: false
+    # Name of the Kubernetes Secret holding the OpenAI Admin API key.
+    secretName: openllm-metrics-openai
+    # Key within the secret. The poller reads from env var
+    # OPENAI_ADMIN_API_KEY (matches `providers.openai.api_key_env`).
+    secretKey: OPENAI_ADMIN_API_KEY
+
+# ── F009 OpenAI poller ───────────────────────────────────────────────────────
+openaiPoller:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: openllm-metrics/openai-poller
+    # Pin to chart appVersion by default; override per environment.
+    tag: ''
+    pullPolicy: ''
+
+  # Polling cadence. 300s is the vision MVP default.
+  pollingIntervalSeconds: 300
+
+  # Tenant context — every event the poller emits carries these labels.
+  labels:
+    env: production
+    team: ai-platform
+    tenant: tenant-001
+    app: openllm-metrics
+    project: openllm-metrics
+    region: us-east-1
+
+  bus:
+    # Comma-resolves to a list inside the configmap template.
+    brokers:
+      - redpanda.bus.svc.cluster.local:9092
+    clientId: openllm-openai-poller
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Liveness uses /healthz (process alive); readiness mirrors it because the
+  # poller is "ready" the moment its HTTP surface binds.
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# ── F010 /metrics aggregator ─────────────────────────────────────────────────
+metricsEndpoint:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: openllm-metrics/metrics-endpoint
+    tag: ''
+    pullPolicy: ''
+
+  bus:
+    brokers:
+      - redpanda.bus.svc.cluster.local:9092
+    clientId: openllm-metrics-endpoint
+    consumerGroup: openllm-metrics-endpoint
+    topics:
+      - llm.usage.normalized
+      - llm.runtime.normalized
+
+  # Bus replay window on cold start. Aligns with default topic retention.
+  replayWindowHours: 168
+
+  service:
+    type: ClusterIP
+    port: 9090
+    # Optional Prometheus-scrape annotations for clusters that scrape via
+    # the well-known prometheus.io/* convention.
+    annotations:
+      prometheus.io/scrape: 'true'
+      prometheus.io/port: '9090'
+      prometheus.io/path: '/metrics'
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 5
+
+# ── Prometheus Operator ServiceMonitor ───────────────────────────────────────
+# Only rendered when the cluster has the Prometheus Operator CRDs installed.
+prometheus:
+  serviceMonitor:
+    enabled: false
+    # Match the Prometheus instance that should scrape this chart.
+    labels: {}
+    # Scrape interval; F012 dashboards assume 30s.
+    interval: 30s
+    scrapeTimeout: 10s
+
+# ── Pod security defaults ────────────────────────────────────────────────────
+# Distroless:nonroot images run as UID 65532 by default. Override only if
+# you swap the base image.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+      - ALL

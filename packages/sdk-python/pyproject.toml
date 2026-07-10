@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openllm-metrics"
+version = "0.1.0"
+description = "OpenLLM Metrics runtime instrumentation SDK for Python — OpenTelemetry GenAI semantic conventions, multi-tenant, content-free."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "OpenLLM Metrics Contributors" }]
+keywords = [
+    "openllm",
+    "llm",
+    "observability",
+    "opentelemetry",
+    "otel",
+    "genai",
+    "metrics",
+    "tracing",
+    "finops",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+examples-openai = ["openai>=1.0.0"]
+examples-anthropic = ["anthropic>=0.34.0"]
+examples-gemini = ["google-generativeai>=0.7.0"]
+examples-bedrock = ["boto3>=1.34.0"]
+
+[project.urls]
+Homepage = "https://github.com/yasvanth511/openllm-metrics-oss"
+Repository = "https://github.com/yasvanth511/openllm-metrics-oss"
+Issues = "https://github.com/yasvanth511/openllm-metrics-oss/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openllm"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/openllm", "README.md", "LICENSE", "pyproject.toml"]

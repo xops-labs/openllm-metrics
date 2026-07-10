@@ -1,0 +1,25 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Grafana dashboard provider — quickstart stack.
+#
+# Empty until F012 lands. F012 should drop dashboard JSON files directly
+# under `platform/deployment/compose/grafana/provisioning/dashboards/`;
+# the provider below will auto-discover any *.json present.
+#
+# The directory must exist (mounted into the container) even when empty
+# or Grafana logs a noisy "No such file or directory" warning.
+
+apiVersion: 1
+
+providers:
+  - name: openllm-metrics
+    orgId: 1
+    folder: OpenLLM Metrics
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: true

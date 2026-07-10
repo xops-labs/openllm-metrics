@@ -1,0 +1,25 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Audit ledger service (F031) — wired for the quickstart compose.
+#
+# Pre-conditions for end-to-end operation:
+#   - Postgres has the audit.ledger tables. Apply the audit migrations
+#     (2026051804_f031_audit_ledger.up.sql).
+#
+# DSN is read from the env var named by database.dsn_env (OPENLLM_AUDIT_DSN).
+
+server:
+  port: 8090
+  max_page_size: 500
+  default_page_size: 100
+
+database:
+  dsn_env: OPENLLM_AUDIT_DSN
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-audit-service-quickstart
+  group: openllm-audit-service-quickstart
+  topic: audit.event.v1

@@ -1,0 +1,453 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# OpenLLM Metrics — minimal data-path quickstart compose (F011).
+#
+# One-file local stack that brings up the data path end-to-end:
+#
+#   Core data path
+#     - openai-poller        F009  raw OpenAI usage + cost poller
+#     - metrics-endpoint     F010  Prometheus /metrics aggregator
+#
+#   Pull-mode exporter add-on (optional, --profile exporter)
+#     - label-translator           scrape upstream llm-usage-exporter /metrics,
+#                                  enrich with canonical tenant labels, publish
+#                                  llm.usage.normalized
+#     - focus-ingester             poll upstream llm-usage-exporter /focus.json,
+#                                  persist line items, publish
+#                                  llm.usage.reconciled
+#
+#   Cost mapping + reconciliation
+#     - cost-mapper          F017  price runtime tokens × catalog, publish
+#                                  llm.cost.estimated; upsert reconciliation
+#                                  drift rows on llm.usage.reconciled
+#     - reconciler           F023  windowed correlation of llm.cost.estimated vs
+#                                  llm.usage.reconciled, drift writes +
+#                                  llm.reconciliation.window emits
+#
+# Out of scope for this compose (use the root docker-compose.yml for the
+# full stack):
+#     - apps/gateway, apps/api/policy-service, apps/api/audit-service,
+#       apps/api/decision-service, apps/worker/quota-risk,
+#       apps/worker/notifier, apps/web/admin-console.
+#
+# Infra brought up: Redpanda (Kafka-compatible bus), Postgres (control-plane
+# storage), Prometheus (TSDB), Grafana (pre-provisioned dashboards).
+#
+# Usage (from the repo root):
+#   docker compose -f platform/deployment/compose/quickstart.yml up -d
+#
+# The poller needs a real OpenAI Admin API key to pull live billing data
+# (the stack still parses and starts without one). Provide it either via the
+# environment:
+#   export OPENAI_ADMIN_API_KEY="sk-admin-..."
+# or via an env file NEXT TO THIS COMPOSE FILE — Compose loads .env from the
+# compose file's directory, not from your current working directory:
+#   cd platform/deployment/compose && cp .env.example .env   # then edit .env
+#
+# Tear down (keep volumes):
+#   docker compose -f platform/deployment/compose/quickstart.yml down
+#
+# Wipe state:
+#   docker compose -f platform/deployment/compose/quickstart.yml down -v
+#
+# Service URLs (all localhost):
+#   Grafana            : http://localhost:3000   (admin / devpassword)
+#   Prometheus         : http://localhost:9091
+#   metrics-endpoint   : http://localhost:9090/metrics
+#   llm-usage-exporter : http://localhost:9095/metrics   (--profile exporter)
+#   openai-poller      : http://localhost:8088/metrics
+#   label-translator   : http://localhost:8081/metrics   (--profile exporter)
+#   focus-ingester     : http://localhost:8082/metrics   (--profile exporter)
+#   cost-mapper        : http://localhost:8083/metrics
+#   reconciler         : http://localhost:8084/metrics
+#   Redpanda console   : http://localhost:8089
+#   Postgres           : localhost:5434          (openllm / devpassword / openllm_metrics)
+#   Redpanda Kafka     : localhost:19092
+#
+# Before the pull-mode / reconciliation path can flow end-to-end:
+#   1. Apply the control-plane migrations so label_mappings, focus_records,
+#      cost_reconciliation_drift, and reconciliation_results exist. This stack
+#      publishes Postgres on host port 5434 (migrate.sh defaults to 5433, the
+#      root stack's port), so override it:
+#         POSTGRES_PORT=5434 make dev-migrate
+#      (or run the SQL under platform/db/control_plane/migrations manually).
+#   2. The pull-mode leg (llm-usage-exporter + label-translator +
+#      focus-ingester) is optional and profile-gated. Bring your own exporter
+#      image — set LLM_USAGE_EXPORTER_IMAGE; the pinned upstream default may
+#      not be publicly pullable — then enable the chain with:
+#        docker compose -f platform/deployment/compose/quickstart.yml \
+#          --profile exporter up -d
+#      Set at least one provider credential (OPENAI_ADMIN_KEY etc.) in your
+#      .env so the exporter has a live source. Without credentials the
+#      exporter starts but returns empty snapshots; label-translator and
+#      focus-ingester will idle gracefully.
+#   3. The gateway is out of scope for this compose; the runtime leg of
+#      cost-mapper / reconciler will idle until a producer attaches to
+#      `llm.runtime.normalized`.
+#
+# Topic note: this compose creates the data-path topics idempotently at
+# startup (`llm.cost.estimated`, `llm.usage.reconciled`,
+# `llm.reconciliation.window`, plus the normalized topics). All of them are
+# registered in `platform/bus/topics.yaml`; the names match the defaults in
+# the consuming services' config packages and must stay in lockstep.
+#
+# Note: only Postgres (5434) and Prometheus (9091) are offset from the
+# all-in-one docker-compose.yml at the repo root — the two stacks still share
+# several host ports (Grafana 3000, Redpanda 19092/18081/18082, worker ports,
+# and this stack's metrics-endpoint on 9090 vs the root stack's Prometheus).
+# Run one stack at a time; tear down with `docker compose down` (or
+# `make dev-down` / `make quickstart-down`) before switching.
+
+name: openllm-metrics-quickstart
+
+services:
+  # ── Streaming bus ────────────────────────────────────────────────────────────
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.9
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 512M
+      - --mode dev-container
+      - --default-log-level=warn
+    ports:
+      - '19092:19092'
+      - '18081:18081'
+      - '18082:18082'
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ['CMD', 'rpk', 'cluster', 'info', '--brokers', 'localhost:9092']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - openllm_quickstart
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.6.0
+    entrypoint: /bin/sh
+    command: -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml; /app/console --config.filepath=/tmp/config.yml'
+    environment:
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+          schemaRegistry:
+            enabled: true
+            urls: ["http://redpanda:8081"]
+    ports:
+      - '8089:8080'
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    networks:
+      - openllm_quickstart
+
+  # Idempotent topic bootstrap. Creates every data-path topic — all of them
+  # registered in platform/bus/topics.yaml; the names below match the
+  # defaults in the consuming services' config packages and must stay in
+  # lockstep.
+  topic-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.9
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        for topic in \
+          llm.usage.normalized \
+          llm.runtime.normalized \
+          llm.usage.reconciled \
+          llm.cost.estimated \
+          llm.reconciliation.window; do
+          rpk topic create "$$topic" --brokers redpanda:9092 --partitions 4 2>/dev/null || true
+          rpk topic create "$${topic}.dlq" --brokers redpanda:9092 --partitions 1 2>/dev/null || true
+        done
+        echo "F011 + F023 quickstart topics ready."
+    restart: on-failure
+    networks:
+      - openllm_quickstart
+
+  # ── Postgres (policy, audit, scoring storage; not used by Phase 1 hot path) ──
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: openllm_metrics
+      POSTGRES_USER: openllm
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - '5434:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U openllm -d openllm_metrics']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - openllm_quickstart
+
+  # ── TSDB ────────────────────────────────────────────────────────────────────
+  # Prometheus is the default-of-record (PromQL is the dashboard query
+  # language). Swap to VictoriaMetrics or Mimir by changing the image + URL
+  # in the datasource; no dashboard JSON needs to change.
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=14d
+      - --web.enable-lifecycle
+    ports:
+      - '9091:9090'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:9090/-/healthy']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - openllm_quickstart
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: devpassword
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:3000/api/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - openllm_quickstart
+
+  # ── OpenLLM Metrics services ────────────────────────────────────────────────
+
+  openai-poller:
+    build:
+      context: ../../../
+      dockerfile: apps/worker/usage-poller/openai/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/openai-poller:dev
+    environment:
+      # Defaults to a placeholder so the stack parses and starts with no env
+      # set. The poller only pulls real OpenAI billing data with a valid key:
+      # export OPENAI_ADMIN_API_KEY, or set it in a .env next to this compose
+      # file (see .env.example here). An empty value still fail-fasts at
+      # startup.
+      OPENAI_ADMIN_API_KEY: ${OPENAI_ADMIN_API_KEY:-sk-admin-REPLACE_ME}
+    ports:
+      - '8088:8080'
+    volumes:
+      - ./configs/openai-poller.yaml:/etc/openllm-poller/openai.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_quickstart
+
+  metrics-endpoint:
+    build:
+      context: ../../../
+      dockerfile: apps/api/metrics-endpoint/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/metrics-endpoint:dev
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./configs/metrics-endpoint.yaml:/etc/openllm-metrics/metrics-endpoint.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - openllm_quickstart
+
+  # ── llm-usage-exporter (optional, --profile exporter) ──────────────────────
+  # BRING YOUR OWN IMAGE: set LLM_USAGE_EXPORTER_IMAGE to your exporter image —
+  # the pinned upstream default may not be publicly pullable. The pin tracks
+  # platform/adoption/llm-usage-exporter.version (source of truth) and is
+  # hardcoded here because Compose cannot read arbitrary files.
+  llm-usage-exporter:
+    image: ${LLM_USAGE_EXPORTER_IMAGE:-ghcr.io/xops-labs/llm-usage-exporter:v0.5.0}
+    profiles: ['exporter']
+    environment:
+      # Pass provider credentials through from the host environment.
+      # Keys are never logged or echoed — Compose only forwards the values.
+      OPENAI_ADMIN_KEY: ${OPENAI_ADMIN_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    ports:
+      - '9095:9090'
+    restart: unless-stopped
+    networks:
+      - openllm_quickstart
+
+  # ── Pull-mode adoption workers (optional, --profile exporter) ───────────────
+  # Both workers consume the `llm-usage-exporter` above, so they are
+  # gated behind the same profile. They declare depends_on so the exporter is
+  # reachable before they attempt the first scrape / poll.
+
+  label-translator:
+    build:
+      context: ../../../
+      dockerfile: apps/worker/label-translator/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/label-translator:dev
+    profiles: ['exporter'] # optional pull-mode add-on; not in the default stack
+    environment:
+      # Postgres DSN for the control_plane schema. The label-translator reads
+      # only control_plane.label_mappings; never log this value.
+      OPENLLM_CONTROL_PLANE_DSN: postgres://openllm:devpassword@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      - '8081:8081'
+    volumes:
+      - ./configs/label-translator.yaml:/etc/openllm-label-translator/config.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      llm-usage-exporter:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - openllm_quickstart
+
+  focus-ingester:
+    build:
+      context: ../../../
+      dockerfile: apps/worker/focus-ingester/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/focus-ingester:dev
+    profiles: ['exporter'] # optional pull-mode add-on; not in the default stack
+    environment:
+      OPENLLM_CONTROL_PLANE_DSN: postgres://openllm:devpassword@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      - '8082:8082'
+    volumes:
+      - ./configs/focus-ingester.yaml:/etc/openllm-focus-ingester/config.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      llm-usage-exporter:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - openllm_quickstart
+
+  # ── Cost mapping (F017) + reconciliation (F023) ─────────────────────────────
+  # cost-mapper consumes llm.runtime.normalized (produced by the gateway/SDK,
+  # which is out of scope for this compose) plus llm.usage.reconciled (from
+  # focus-ingester). It publishes llm.cost.estimated. reconciler joins
+  # llm.cost.estimated × llm.usage.reconciled, writes drift rows, and publishes
+  # llm.reconciliation.window when a window closes.
+
+  cost-mapper:
+    build:
+      context: ../../../
+      dockerfile: apps/worker/cost-mapper/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/cost-mapper:dev
+    environment:
+      OPENLLM_CONTROL_PLANE_DSN: postgres://openllm:devpassword@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      - '8083:8083'
+    volumes:
+      - ./configs/cost-mapper.yaml:/etc/openllm-cost-mapper/config.yaml:ro
+      # Mount the per-provider pricing catalog read-only so PRs to
+      # platform/pricing/ land without a rebuild. The slow reloader in the
+      # worker re-reads this directory on cfg.Catalog.ReloadIntervalSeconds.
+      - ../../../platform/pricing:/etc/openllm-cost-mapper/pricing:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - openllm_quickstart
+
+  reconciler:
+    build:
+      context: ../../../
+      dockerfile: apps/worker/reconciler/Dockerfile
+      args:
+        IMAGE_VERSION: dev
+    image: openllm/reconciler:dev
+    environment:
+      OPENLLM_CONTROL_PLANE_DSN: postgres://openllm:devpassword@postgres:5432/openllm_metrics?sslmode=disable
+    ports:
+      - '8084:8084'
+    volumes:
+      - ./configs/reconciler.yaml:/etc/openllm-reconciler/config.yaml:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - openllm_quickstart
+
+networks:
+  openllm_quickstart:
+    driver: bridge
+    name: openllm_quickstart
+
+volumes:
+  redpanda-data:
+  postgres-data:
+  prometheus-data:
+  grafana-data:

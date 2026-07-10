@@ -1,0 +1,34 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# Notification fan-out worker (F033) — wired for the quickstart compose.
+#
+# Consumes alert.event.v1, fans out to configured sinks (webhook/SMTP), and
+# records deliveries. Audit mutations are emitted on audit.event.v1.
+#
+# Pre-conditions for end-to-end operation:
+#   - Postgres has the control_plane.notification_* tables. Apply the
+#     control_plane migrations (2026051805_f033_notifications.up.sql).
+#
+# DSN is read from the env var named by database.dsn_env
+# (OPENLLM_CONTROL_PLANE_DSN).
+
+server:
+  port: 8085
+
+database:
+  dsn_env: OPENLLM_CONTROL_PLANE_DSN
+
+bus:
+  brokers:
+    - redpanda:9092
+  client_id: openllm-notifier-quickstart
+  group_id: openllm-notifier-quickstart
+  alert_topic: alert.event.v1
+  audit_topic: audit.event.v1
+
+retry:
+  max_attempts: 5
+  initial_backoff_ms: 500
+  max_backoff_ms: 30000
+  per_attempt_timeout_seconds: 10

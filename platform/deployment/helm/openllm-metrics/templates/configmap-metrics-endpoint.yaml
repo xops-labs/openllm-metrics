@@ -1,0 +1,30 @@
+{{/*
+Copyright 2026 Yasvanth Udayakumar
+Licensed under the Apache License, Version 2.0.
+*/}}
+{{- if .Values.metricsEndpoint.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openllm-metrics.fullname" . }}-metrics-endpoint
+  labels:
+    {{- include "openllm-metrics.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics-endpoint
+data:
+  metrics-endpoint.yaml: |
+    server:
+      port: {{ .Values.metricsEndpoint.service.port }}
+    bus:
+      brokers:
+        {{- range .Values.metricsEndpoint.bus.brokers }}
+        - {{ . | quote }}
+        {{- end }}
+      client_id: {{ .Values.metricsEndpoint.bus.clientId | quote }}
+      group: {{ .Values.metricsEndpoint.bus.consumerGroup | quote }}
+      topics:
+        {{- range .Values.metricsEndpoint.bus.topics }}
+        - {{ . | quote }}
+        {{- end }}
+    replay:
+      window_hours: {{ .Values.metricsEndpoint.replayWindowHours }}
+{{- end }}

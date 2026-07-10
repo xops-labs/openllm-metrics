@@ -1,0 +1,441 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+openapi: 3.1.0
+info:
+  title: OpenLLM Metrics - audit-service
+  version: '0.1.0'
+  description: |
+    F031 append-only audit ledger service. Consumes audit.event.v1 events
+    from the streaming bus, stores them in a hash-chained Postgres ledger,
+    and exposes a read-only HTTP API for querying, bulk export, and
+    server-side chain verification.
+
+    Tenancy is expressed via the `?tenant=` query parameter on every
+    endpoint. In production an upstream auth proxy validates the caller's
+    JWT against the requested tenant; the audit-service does not enforce
+    JWT/OIDC itself (consistent with other Phase G OSS services).
+
+    Cursor pagination: the list endpoint returns `{entries: [...], next:
+    <id>}`. Pass `?cursor=<id>` to fetch the next, older page.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: http://localhost:8090
+    description: Local development (default port)
+paths:
+  /v1/audit/entries:
+    get:
+      summary: Paginated query of audit entries.
+      operationId: listAuditEntries
+      parameters:
+        - $ref: '#/components/parameters/TenantQuery'
+        - name: action
+          in: query
+          required: false
+          description: Filter by action string (exact match).
+          schema:
+            type: string
+            example: policy.created
+        - name: actor_id
+          in: query
+          required: false
+          description: Filter by actor (exact match).
+          schema:
+            type: string
+            example: alice@example.com
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound on created_at (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+            example: '2026-01-01T00:00:00Z'
+        - name: to
+          in: query
+          required: false
+          description: Inclusive upper bound on created_at (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+            example: '2026-12-31T23:59:59Z'
+        - name: cursor
+          in: query
+          required: false
+          description: |
+            Integer row ID cursor returned by the previous page's `next`
+            field. Pass it to fetch the next older page.
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          required: false
+          description: |
+            Number of rows to return. Capped at max_page_size (default 500).
+            Defaults to default_page_size (default 50).
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+      responses:
+        '200':
+          description: Page of audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntryListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/audit/entries/{id}:
+    get:
+      summary: Get a single audit entry by its integer ID.
+      operationId: getAuditEntry
+      parameters:
+        - $ref: '#/components/parameters/TenantQuery'
+        - name: id
+          in: path
+          required: true
+          description: Integer row ID of the audit entry.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Single audit entry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/audit/export:
+    get:
+      summary: Streaming JSONL bulk export.
+      description: |
+        Streams all audit entries for the tenant within the optional time
+        window as newline-delimited JSON (one AuditEntry JSON object per
+        line). The response begins as soon as rows start flowing from
+        Postgres; callers can begin processing before the full export
+        completes.
+
+        On a mid-stream store error the last line contains
+        `{"_error": "<message>"}` to signal truncation — the HTTP status
+        code is already 200 at that point.
+
+        Only `format=jsonl` is supported (the default when omitted).
+      operationId: exportAuditEntries
+      parameters:
+        - $ref: '#/components/parameters/TenantQuery'
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound on created_at (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Inclusive upper bound on created_at (RFC 3339).
+          schema:
+            type: string
+            format: date-time
+        - name: format
+          in: query
+          required: false
+          description: Export format. Only "jsonl" is accepted.
+          schema:
+            type: string
+            enum:
+              - jsonl
+            default: jsonl
+      responses:
+        '200':
+          description: |
+            Streaming JSONL body — one AuditEntry per line. On error the
+            stream may be terminated early with a `{"_error":"..."}` trailer
+            line.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                description: Newline-delimited JSON stream of AuditEntry objects.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /v1/audit/verify:
+    get:
+      summary: Server-side hash-chain verification.
+      description: |
+        Recomputes the SHA-256 chain hashes row by row over the segment
+        [from_id, to_id] (inclusive). Returns the first mismatch found or
+        confirms the chain is intact.
+
+        When `from_id` > 1 the first row in the segment is treated as the
+        anchor: chain checking begins from the second row onward (because
+        the predecessor of the first row is not re-fetched in this call).
+      operationId: verifyAuditChain
+      parameters:
+        - $ref: '#/components/parameters/TenantQuery'
+        - name: from_id
+          in: query
+          required: false
+          description: |
+            Start of the row-ID segment to verify. Defaults to 0 (the
+            beginning of the ledger).
+          schema:
+            type: integer
+            format: int64
+            default: 0
+        - name: to_id
+          in: query
+          required: false
+          description: |
+            End of the row-ID segment (inclusive). Defaults to 0 (the end
+            of the ledger).
+          schema:
+            type: integer
+            format: int64
+            default: 0
+      responses:
+        '200':
+          description: Verification result (success or first mismatch found).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /metrics:
+    get:
+      summary: Prometheus self-metrics scrape endpoint.
+      description: |
+        Returns the Prometheus text exposition of this service's own
+        operational counters (queries, export rows, verify checks/breaks,
+        consumer lag, etc.). Not a user-facing endpoint.
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /healthz:
+    get:
+      summary: Liveness probe.
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      summary: Readiness probe.
+      description: |
+        Returns 200 once the bus consumer has caught up to bus head (i.e.
+        Ready()=true on the consumer). Returns 503 while the consumer is
+        still warming up.
+      operationId: getReadyz
+      responses:
+        '200':
+          description: Service is ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                ready: true
+        '503':
+          description: Service is warming up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                ready: false
+                reason: warming
+
+components:
+  parameters:
+    TenantQuery:
+      name: tenant
+      in: query
+      required: true
+      description: |
+        Tenant identifier. All queries are scoped to this tenant. The value
+        is an opaque string (typically a UUID) passed through to the store.
+      schema:
+        type: string
+        example: 018e4c7a-1b2d-7000-8000-000000000001
+
+  schemas:
+    AuditEntry:
+      type: object
+      description: |
+        A single immutable audit ledger row. prev_hash and entry_hash are
+        base64-encoded SHA-256 values (standard encoding, no padding strip).
+      required:
+        - id
+        - tenant_id
+        - actor
+        - action
+        - resource
+        - payload
+        - prev_hash
+        - entry_hash
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Monotonically increasing row ID (chain anchor).
+        tenant_id:
+          type: string
+          description: Tenant this entry belongs to.
+        actor:
+          type: object
+          additionalProperties: true
+          description: Structured principal that performed the action.
+        action:
+          type: string
+          description: Event action string (e.g. "policy.created").
+          example: policy.created
+        resource:
+          type: object
+          additionalProperties: true
+          description: The resource the action was performed on.
+        payload:
+          type: object
+          additionalProperties: true
+          description: Arbitrary event metadata.
+        prev_hash:
+          type: string
+          description: |
+            Base64-encoded SHA-256 of the previous entry's entry_hash.
+            All-zeros for the first row.
+          example: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        entry_hash:
+          type: string
+          description: |
+            Base64-encoded SHA-256 of this row's canonical fields
+            (tenant_id + id + actor + action + resource + payload +
+            prev_hash + created_at).
+        created_at:
+          type: string
+          format: date-time
+          description: RFC 3339 nanosecond-precision timestamp.
+
+    EntryListResponse:
+      type: object
+      required:
+        - entries
+        - next
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+        next:
+          type: integer
+          format: int64
+          description: |
+            Row ID of the last entry on this page. Pass as `?cursor=` to
+            fetch the next older page. 0 when the page is empty.
+
+    VerifyResult:
+      type: object
+      required:
+        - ok
+        - checked
+      properties:
+        ok:
+          type: boolean
+          description: True when the chain is intact over the verified segment.
+        checked:
+          type: integer
+          description: Number of rows checked.
+        last_id:
+          type: integer
+          format: int64
+          description: Row ID of the last successfully verified row. Present when ok=true.
+        broken_at:
+          type: integer
+          format: int64
+          description: Row ID where the first mismatch was detected. Present when ok=false.
+        expected_hash:
+          type: string
+          description: Base64-encoded hash that was expected. Present when ok=false.
+        actual_hash:
+          type: string
+          description: Base64-encoded hash that was found. Present when ok=false.
+        reason:
+          type: string
+          description: Human-readable description of the mismatch. Present when ok=false.
+          example: prev_hash does not match prior entry_hash
+
+    Readiness:
+      type: object
+      required:
+        - ready
+      properties:
+        ready:
+          type: boolean
+        reason:
+          type: string
+          description: Human-readable reason when ready=false.
+          example: warming
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+
+  responses:
+    BadRequest:
+      description: Bad request — missing or malformed parameter.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: tenant query param is required
+    NotFound:
+      description: Entry not found within this tenant's scope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: not found
+    InternalError:
+      description: Unexpected internal error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: context deadline exceeded

@@ -1,0 +1,39 @@
+# Copyright 2026 Yasvanth Udayakumar
+# Licensed under the Apache License, Version 2.0.
+#
+# OpenAI public list prices (USD per 1,000 tokens).
+#
+# Source: https://openai.com/api/pricing/ (snapshot late 2025).
+# These are APPROXIMATE list prices for unblended on-demand usage and do not
+# reflect committed-use, batch, cached-input, or contract discounts. Update
+# this file via PR — the catalog is the single source of truth for the cost
+# mapping engine (see F017).
+#
+# Currency is USD. Rates are quoted per 1,000 tokens (input / output split).
+provider: openai
+currency: USD
+unit: per_1k_tokens
+approximate: true
+effective_from: '2025-10-01T00:00:00Z'
+models:
+  - model: gpt-4o
+    input_per_1k: 0.0025
+    output_per_1k: 0.0100
+  - model: gpt-4o-mini
+    input_per_1k: 0.00015
+    output_per_1k: 0.00060
+  - model: gpt-4.1
+    input_per_1k: 0.0020
+    output_per_1k: 0.0080
+  - model: gpt-4.1-mini
+    input_per_1k: 0.00040
+    output_per_1k: 0.00160
+  - model: o1
+    input_per_1k: 0.0150
+    output_per_1k: 0.0600
+  - model: text-embedding-3-small
+    input_per_1k: 0.00002
+    output_per_1k: 0.0
+  - model: text-embedding-3-large
+    input_per_1k: 0.00013
+    output_per_1k: 0.0
